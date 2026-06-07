@@ -104,14 +104,22 @@ label {
 }
 
 .brand-mark {
-  display: grid;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
   width: 38px;
   height: 38px;
-  place-items: center;
   border-radius: var(--radius);
   background: #246b61;
-  color: #fff;
-  font-weight: 800;
+  padding: 8px;
+}
+
+.brand-mark span {
+  display: block;
+  height: 4px;
+  border-radius: 999px;
+  background: #fffaf1;
 }
 
 .brand-text {
@@ -504,18 +512,83 @@ label {
 }
 
 .avatar-inner {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
   text-align: center;
 }
 
-.avatar-inner strong {
-  display: block;
-  font-size: 28px;
+.avatar-glyph {
+  display: grid;
+  gap: 7px;
+  width: 48px;
 }
 
-.avatar-inner span {
+.avatar-glyph span {
   display: block;
-  margin-top: 6px;
+  height: 8px;
+  border-radius: 999px;
+  background: #2a2a2a;
+}
+
+.avatar-inner > span {
   font-weight: 800;
+}
+
+.title-rule-list {
+  display: grid;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.record-list {
+  display: grid;
+  gap: 10px;
+}
+
+.record-item {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fffdf8;
+}
+
+.record-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.record-head span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.record-item p {
+  margin: 0;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.tag-list span {
+  padding: 4px 7px;
+  border-radius: 999px;
+  background: #e6f0ed;
+  color: #1f6258;
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .attribute-row {

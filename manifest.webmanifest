@@ -1,6 +1,6 @@
 {
-  "name": "三维成长",
-  "short_name": "三维成长",
+  "name": "科研人才养成计划",
+  "short_name": "科研成长",
   "description": "把体魄、心境、学业做成每日加分制成长游戏。",
   "start_url": "./index.html",
   "scope": "./",

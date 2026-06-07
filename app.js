@@ -98,6 +98,18 @@ const TASKS = [
 
 const REPAIR_TASKS = ["整理明天计划", "轻运动 10 分钟", "补一段学习输出"];
 
+const TITLE_RULES = [
+  "等待开局者：当前周期没有记录。",
+  "三维满格者：周均分达到 27 分以上。",
+  "稳定进阶者：月均分达到 27 分以上。",
+  "输出型研究者：均分达到 23 分以上，且学业是优势项。",
+  "清醒推进者：均分达到 23 分以上，且心境是优势项。",
+  "稳定筑基者：均分达到 23 分以上，且体魄是优势项或三项接近。",
+  "持续推进者：均分达到 18 分以上。",
+  "复苏练习生：均分低于 18 分，且心境是照看项。",
+  "重新校准者：均分低于 18 分，且照看项不是心境。"
+];
+
 const app = document.querySelector("#app");
 let installPrompt = null;
 
@@ -244,9 +256,9 @@ function render() {
       <header class="topbar">
         <div class="topbar-inner">
           <div class="brand">
-            <div class="brand-mark">三</div>
+            <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div>
             <div class="brand-text">
-              <div class="brand-title">三维成长</div>
+              <div class="brand-title">科研人才养成计划</div>
               <div class="brand-subtitle">${headerSubtitle()}</div>
             </div>
           </div>
@@ -451,7 +463,7 @@ function renderCharacterView() {
         <div class="character-hero">
           <div class="avatar">
             <div class="avatar-inner">
-              <strong>三</strong>
+              <div class="avatar-glyph" aria-hidden="true"><span></span><span></span><span></span></div>
               <span>Lv.${character.totalLevel}</span>
             </div>
           </div>
@@ -476,6 +488,13 @@ function renderCharacterView() {
       <div class="grid-2">
         ${titlePanel("本周称号", week.title, week.insight)}
         ${titlePanel("本月称号", month.title, month.nextSuggestion)}
+      </div>
+
+      <div class="panel panel-pad">
+        <div class="panel-title"><h2>内置称号规则</h2></div>
+        <div class="title-rule-list">
+          ${TITLE_RULES.map((rule) => `<div>${rule}</div>`).join("")}
+        </div>
       </div>
     </section>
   `;
@@ -616,6 +635,8 @@ function renderReviewView() {
       </div>
 
       ${ui.reviewPeriod === "week" ? renderWeeklyFocusPanel() : renderMonthPanel()}
+
+      ${renderRecordHistoryPanel()}
     </section>
   `;
 }
@@ -649,6 +670,44 @@ function renderMonthPanel() {
       </div>
       <p class="hint">颜色越深表示当天得分越高；空白代表尚未记录。</p>
     </div>
+  `;
+}
+
+function renderRecordHistoryPanel() {
+  const rows = sortedRecords()
+    .filter(isRecorded)
+    .slice()
+    .reverse()
+    .slice(0, 14);
+
+  return `
+    <div class="panel panel-pad">
+      <div class="panel-title">
+        <h2>每日记录回看</h2>
+        <span class="hint">最近 ${rows.length} 条</span>
+      </div>
+      ${
+        rows.length
+          ? `<div class="record-list">${rows.map(renderRecordHistoryItem).join("")}</div>`
+          : emptyState("还没有可回看的记录", "完成一次今日结算后，这里会显示总结、满意度和标签。")
+      }
+    </div>
+  `;
+}
+
+function renderRecordHistoryItem(record) {
+  const tags = record.tags?.length ? record.tags.map((tag) => `<span>${escapeHTML(tag)}</span>`).join("") : `<span>无标签</span>`;
+  const reflection = record.reflection?.trim() ? escapeHTML(record.reflection.trim()) : "未填写一句话总结";
+
+  return `
+    <article class="record-item">
+      <div class="record-head">
+        <strong>${formatDate(record.date)}</strong>
+        <span>${gradeFor(record)} · ${formatNumber(totalScore(record))}/30 · 满意度 ${record.satisfaction}/5</span>
+      </div>
+      <p>${reflection}</p>
+      <div class="tag-list">${tags}</div>
+    </article>
   `;
 }
 

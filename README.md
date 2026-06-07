@@ -1,4 +1,4 @@
-# 三维成长 PWA
+# 科研人才养成计划 PWA
 
 这是 Windows 友好的三维成长游戏版本。它不依赖 macOS、Xcode 或 npm，使用原生 HTML/CSS/JavaScript 实现。
 

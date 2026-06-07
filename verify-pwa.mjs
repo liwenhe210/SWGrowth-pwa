@@ -10,7 +10,7 @@ const port = Number(process.env.CDP_PORT || 9223);
 const viewportWidth = Number(process.env.VERIFY_WIDTH || 390);
 const viewportHeight = Number(process.env.VERIFY_HEIGHT || 844);
 const root = resolve(fileURLToPath(new URL(".", import.meta.url)));
-const profile = join(root, ".chrome-profile-cdp");
+const profile = join(root, `.chrome-profile-cdp-${port}-${viewportWidth}x${viewportHeight}`);
 const screenshotPath = join(root, `pwa-cdp-${viewportWidth}x${viewportHeight}.png`);
 
 mkdirSync(profile, { recursive: true });
