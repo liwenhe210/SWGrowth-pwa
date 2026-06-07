@@ -1,0 +1,47 @@
+# 三维成长 PWA
+
+这是 Windows 友好的三维成长游戏版本。它不依赖 macOS、Xcode 或 npm，使用原生 HTML/CSS/JavaScript 实现。
+
+## 功能
+
+- 每日 9 项加分记录：体魄、心境、学业各 10 分。
+- 三段式状态：未做、部分、完成。
+- 保护日、主观满意度、标签、一句话总结。
+- 角色三维属性、XP、等级、金币和平衡加成。
+- 自定义奖励、奖励进度条、兑换记录、轻量修复任务。
+- 周/月总结、称号、趋势、月度热力图。
+- `localStorage` 本地存储，service worker 离线缓存。
+
+## Windows 本地运行
+
+在项目根目录运行：
+
+```powershell
+node SanWeiGrowthPWA/dev-server.mjs 5173
+```
+
+然后打开：
+
+```text
+http://localhost:5173
+```
+
+同一 Wi-Fi 下临时用手机访问 Windows 电脑：
+
+```powershell
+$env:HOST="0.0.0.0"; node SanWeiGrowthPWA/dev-server.mjs 5173
+```
+
+然后在手机 Safari 打开电脑的局域网地址，例如：
+
+```text
+http://你的电脑IP:5173
+```
+
+局域网 HTTP 适合临时预览；正式添加到主屏幕建议部署到 HTTPS 静态站点。
+
+## iPhone 使用方式
+
+最稳定的方式是部署到 HTTPS 静态站点，例如 GitHub Pages、Cloudflare Pages 或 Netlify。部署后在 iPhone Safari 中打开网址，点分享按钮，再选择「添加到主屏幕」。
+
+如果只是用 iPhone 访问 Windows 局域网地址，可以看到网页界面，但离线缓存和安装能力可能受 iOS 的安全限制影响。
