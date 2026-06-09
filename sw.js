@@ -1,4 +1,4 @@
-const CACHE_NAME = "sanwei-growth-v5";
+const CACHE_NAME = "sanwei-growth-v6";
 const ASSETS = [
   "./",
   "./index.html",

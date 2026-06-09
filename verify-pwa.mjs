@@ -9,6 +9,8 @@ const appURL = process.argv[2] || "http://127.0.0.1:5173/";
 const port = Number(process.env.CDP_PORT || 9223);
 const viewportWidth = Number(process.env.VERIFY_WIDTH || 390);
 const viewportHeight = Number(process.env.VERIFY_HEIGHT || 844);
+const verifyTab = process.env.VERIFY_TAB || "";
+const seedDemo = process.env.VERIFY_SEED === "1";
 const root = resolve(fileURLToPath(new URL(".", import.meta.url)));
 const profile = join(root, `.chrome-profile-cdp-${port}-${viewportWidth}x${viewportHeight}`);
 const screenshotPath = join(root, `pwa-cdp-${viewportWidth}x${viewportHeight}.png`);
@@ -41,6 +43,64 @@ try {
   });
   await client.send("Page.navigate", { url: appURL });
   await delay(1400);
+  if (seedDemo) {
+    await client.send("Runtime.evaluate", {
+      expression: `(() => {
+        const keyFromDate = (date) => {
+          const y = date.getFullYear();
+          const m = String(date.getMonth() + 1).padStart(2, "0");
+          const d = String(date.getDate()).padStart(2, "0");
+          return y + "-" + m + "-" + d;
+        };
+        const addDays = (date, days) => {
+          const copy = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+          copy.setDate(copy.getDate() + days);
+          return copy;
+        };
+        const today = new Date();
+        const records = {};
+        [-4, -3, -2, -1, 0].forEach((offset, index) => {
+          const date = keyFromDate(addDays(today, offset));
+          records[date] = {
+            date,
+            entries: {
+              health_sleep: index > 1 ? "done" : "partial",
+              health_food: "partial",
+              health_move: index % 2 ? "done" : "none",
+              mind_awareness: "done",
+              mind_recovery: index > 2 ? "done" : "partial",
+              mind_support: index === 2 ? "done" : "partial",
+              study_focus: "done",
+              study_input: index < 3 ? "done" : "partial",
+              study_output: index > 1 ? "done" : "partial"
+            },
+            isProtectionDay: false,
+            reflection: index === 2 ? "有点内耗，但还是写完了实验记录" : "今天完成了一段可见输出",
+            satisfaction: Math.min(5, 2 + index),
+            tags: ["论文", index > 1 ? "输出" : "文献"],
+            settledAt: new Date().toISOString()
+          };
+        });
+        localStorage.setItem("sanwei-growth-pwa:v1", JSON.stringify({
+          records,
+          rewards: [],
+          weeklyFocus: "提高可见输出",
+          weeklyGoal: 21,
+          cooldownUntil: null,
+          lastPenaltyWeekKey: null,
+          repairCompletions: []
+        }));
+        location.reload();
+      })()`
+    });
+    await delay(900);
+  }
+  if (verifyTab) {
+    await client.send("Runtime.evaluate", {
+      expression: `document.querySelector('[data-tab="${verifyTab}"]')?.click()`
+    });
+    await delay(400);
+  }
 
   const metrics = await client.send("Runtime.evaluate", {
     returnByValue: true,
@@ -52,6 +112,10 @@ try {
         scrollWidth: document.documentElement.scrollWidth,
         bodyScrollWidth: document.body.scrollWidth,
         title: document.querySelector(".brand-title")?.textContent || "",
+        activeTab: document.querySelector(".tab-btn.is-active")?.textContent.trim() || "",
+        topActions: [...document.querySelectorAll(".top-actions button")].map((button) => button.textContent.trim()),
+        charts: document.querySelectorAll(".chart-card").length,
+        historyItems: document.querySelectorAll(".record-item").length,
         tabs: [...document.querySelectorAll(".tab-btn")].map((button) => button.textContent.trim()),
         firstSegment: firstSegment.map((button) => ({
           text: button.textContent.trim(),

@@ -20,6 +20,12 @@ node --check SanWeiGrowthPWA/sw.js
 
 6. 上传到 GitHub 仓库根目录，等待 GitHub Pages 自动更新。
 
+移动端和回顾页渲染检查：
+
+```powershell
+$env:VERIFY_WIDTH="390"; $env:VERIFY_HEIGHT="844"; $env:VERIFY_TAB="review"; $env:VERIFY_SEED="1"; node SanWeiGrowthPWA/verify-pwa.mjs http://127.0.0.1:5173/
+```
+
 ## 文件分工
 
 - `app.js`：应用逻辑、计分、奖励、称号、备份恢复、页面渲染。
@@ -28,6 +34,7 @@ node --check SanWeiGrowthPWA/sw.js
 - `manifest.webmanifest`：PWA 名称、图标、安装信息。
 - `sw.js`：离线缓存。每次改动上线后，建议递增 `CACHE_NAME`。
 - `assets/`：主屏幕图标和浏览器图标。
+- `SYNC_AND_AI_PLAN.md`：账号同步和 AI 称号接入方案。
 
 ## iOS 图标更新
 
@@ -58,3 +65,5 @@ iOS 可能会缓存旧的主屏幕图标。上传新图标后：
 - Row Level Security：限制用户只能读取和写入自己的数据。
 
 静态 GitHub Pages 可以继续作为前端托管，不需要自建服务器；浏览器端通过 Supabase SDK 读写云端数据。
+
+更详细的同步和 AI 称号方案见 `SYNC_AND_AI_PLAN.md`。

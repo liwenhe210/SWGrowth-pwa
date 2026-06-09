@@ -99,15 +99,15 @@ const TASKS = [
 const REPAIR_TASKS = ["整理明天计划", "轻运动 10 分钟", "补一段学习输出"];
 
 const TITLE_RULES = [
-  "等待开局者：当前周期没有记录。",
-  "三维满格者：周均分达到 27 分以上。",
-  "稳定进阶者：月均分达到 27 分以上。",
-  "输出型研究者：均分达到 23 分以上，且学业是优势项。",
-  "清醒推进者：均分达到 23 分以上，且心境是优势项。",
-  "稳定筑基者：均分达到 23 分以上，且体魄是优势项或三项接近。",
-  "持续推进者：均分达到 18 分以上。",
-  "复苏练习生：均分低于 18 分，且心境是照看项。",
-  "重新校准者：均分低于 18 分，且照看项不是心境。"
+  "三维均衡：三项都达到稳定线，或一个周期里平衡日较多。",
+  "早睡新手：睡眠节律有明显执行。",
+  "内耗拦截者：自评里出现焦虑、内耗、压力等词，同时心境任务有恢复动作。",
+  "文献启动：有学业输入，但输出还没跟上。",
+  "输出比输入重要：可见输出不低于输入。",
+  "低谷不断线：分数不高，但仍然有记录、有保护日或持续活跃。",
+  "研究生模式：学业专注和输出都有推进。",
+  "身体先稳住：体魄较稳，同时心境没有完全掉线。",
+  "今日不断线 / 高能推进：作为低门槛记录和高分推进的兜底称号。"
 ];
 
 const app = document.querySelector("#app");
@@ -263,7 +263,7 @@ function render() {
             </div>
           </div>
           <div class="top-actions">
-            ${installPrompt ? `<button class="secondary-btn" data-action="install">安装</button>` : ""}
+            <button class="secondary-btn" data-action="install">安装</button>
             <button class="secondary-btn" data-action="export">备份</button>
           </div>
         </div>
@@ -336,6 +336,7 @@ function renderDailyView() {
             <div class="rings">
               ${DIMENSIONS.map((dimension) => renderDimensionRing(record, dimension)).join("")}
             </div>
+            <div class="title-preview">今日称号：${dailyTitleFor(record)}</div>
             ${hasBalanceBonus(record) ? `<div class="bonus-line">三项均达 6 分，今日可获得平衡加成金币。</div>` : ""}
           </div>
         </div>
@@ -634,6 +635,8 @@ function renderReviewView() {
         ` : ""}
       </div>
 
+      ${renderTrendChartsPanel(ui.reviewPeriod)}
+
       ${ui.reviewPeriod === "week" ? renderWeeklyFocusPanel() : renderMonthPanel()}
 
       ${renderRecordHistoryPanel()}
@@ -673,6 +676,63 @@ function renderMonthPanel() {
   `;
 }
 
+function renderTrendChartsPanel(period) {
+  const series = trendSeries(period);
+  const recordedCount = series.filter((item) => item.record).length;
+
+  return `
+    <div class="panel panel-pad">
+      <div class="panel-title">
+        <h2>折线统计</h2>
+        <span class="hint">${recordedCount} 个记录点</span>
+      </div>
+      ${
+        recordedCount
+          ? `<div class="trend-grid">
+              ${renderLineChart("总分", series.map((item) => ({ ...item, value: item.record ? totalScore(item.record) : null })), 30, "#2f6f8f")}
+              ${DIMENSIONS.map((dimension) => renderLineChart(
+                dimension.title,
+                series.map((item) => ({ ...item, value: item.record ? scoreForDimension(item.record, dimension.id) : null })),
+                10,
+                dimension.color
+              )).join("")}
+            </div>`
+          : `<div class="empty-state"><strong>暂无折线数据</strong><span>完成记录后，这里会展示总分和三大板块的变化。</span></div>`
+      }
+    </div>
+  `;
+}
+
+function renderLineChart(title, series, maxValue, color) {
+  const points = chartPoints(series, maxValue);
+  const linePoints = points.filter((point) => point.value !== null).map((point) => `${point.x},${point.y}`).join(" ");
+  const latest = [...series].reverse().find((item) => item.value !== null);
+
+  return `
+    <article class="chart-card" style="--chart-color:${color}">
+      <div class="chart-head">
+        <strong>${title}</strong>
+        <span>${latest ? `${formatNumber(latest.value)}/${maxValue}` : "暂无"}</span>
+      </div>
+      <svg class="line-chart" viewBox="0 0 320 126" role="img" aria-label="${title}折线图">
+        <line x1="18" y1="18" x2="18" y2="104" class="chart-axis"></line>
+        <line x1="18" y1="104" x2="306" y2="104" class="chart-axis"></line>
+        <line x1="18" y1="61" x2="306" y2="61" class="chart-grid-line"></line>
+        ${linePoints ? `<polyline points="${linePoints}" class="chart-line"></polyline>` : ""}
+        ${points.filter((point) => point.value !== null).map((point) => `
+          <circle cx="${point.x}" cy="${point.y}" r="3.2" class="chart-dot">
+            <title>${point.label}: ${formatNumber(point.value)}</title>
+          </circle>
+        `).join("")}
+      </svg>
+      <div class="chart-labels">
+        <span>${series[0]?.label || ""}</span>
+        <span>${series[series.length - 1]?.label || ""}</span>
+      </div>
+    </article>
+  `;
+}
+
 function renderRecordHistoryPanel() {
   const rows = sortedRecords()
     .filter(isRecorded)
@@ -700,14 +760,39 @@ function renderRecordHistoryItem(record) {
   const reflection = record.reflection?.trim() ? escapeHTML(record.reflection.trim()) : "未填写一句话总结";
 
   return `
-    <article class="record-item">
-      <div class="record-head">
-        <strong>${formatDate(record.date)}</strong>
+    <details class="record-item">
+      <summary class="record-head">
+        <span>
+          <strong>${formatDate(record.date)}</strong>
+          <em>${dailyTitleFor(record)}</em>
+        </span>
         <span>${gradeFor(record)} · ${formatNumber(totalScore(record))}/30 · 满意度 ${record.satisfaction}/5</span>
-      </div>
+      </summary>
       <p>${reflection}</p>
       <div class="tag-list">${tags}</div>
-    </article>
+      <div class="record-score-detail">
+        ${DIMENSIONS.map((dimension) => renderRecordDimensionDetail(record, dimension)).join("")}
+      </div>
+    </details>
+  `;
+}
+
+function renderRecordDimensionDetail(record, dimension) {
+  const tasks = TASKS.filter((task) => task.dimension === dimension.id);
+
+  return `
+    <div class="record-dimension" style="--dimension-color:${dimension.color}">
+      <div class="record-dimension-head">
+        <strong>${dimension.title}</strong>
+        <span>${formatNumber(scoreForDimension(record, dimension.id))}/10</span>
+      </div>
+      ${tasks.map((task) => `
+        <div class="record-task">
+          <span>${task.title}</span>
+          <span>${statusLabel(record.entries[task.id] || "none")} · ${formatNumber(taskScore(record, task))}/${task.points}</span>
+        </div>
+      `).join("")}
+    </div>
   `;
 }
 
@@ -732,6 +817,7 @@ function renderModal() {
   if (ui.modal.type === "settlement") return renderSettlementModal(ui.modal.snapshot);
   if (ui.modal.type === "addReward") return renderAddRewardModal();
   if (ui.modal.type === "backup") return renderBackupModal();
+  if (ui.modal.type === "install") return renderInstallModal();
   return "";
 }
 
@@ -837,6 +923,38 @@ function renderBackupModal() {
           <button class="secondary-btn" data-action="download-backup">下载</button>
           <button class="secondary-btn" data-action="restore-backup">恢复</button>
           <button class="primary-btn" data-action="copy-backup">复制</button>
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function renderInstallModal() {
+  return `
+    <div class="modal-backdrop">
+      <section class="modal" role="dialog" aria-modal="true" aria-label="安装说明" data-modal>
+        <div class="modal-header">
+          <h2>安装到主屏幕</h2>
+          <button class="ghost-btn" data-action="close-modal">关闭</button>
+        </div>
+        <div class="modal-body">
+          <div class="install-steps">
+            <div>
+              <strong>iPhone / iPad Safari</strong>
+              <p>点底部分享按钮，选择「添加到主屏幕」，再点「添加」。如果已经安装过，删除旧图标后重新添加可以刷新图标和标题。</p>
+            </div>
+            <div>
+              <strong>Android Chrome</strong>
+              <p>点右上角菜单，选择「安装应用」或「添加到主屏幕」。如果当前浏览器支持直接安装，也可以点本页顶部「安装」按钮。</p>
+            </div>
+            <div>
+              <strong>电脑浏览器</strong>
+              <p>Chrome / Edge 地址栏右侧可能出现安装图标；也可以从浏览器菜单里选择安装应用。</p>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="primary-btn" data-action="close-modal">知道了</button>
         </div>
       </section>
     </div>
@@ -1026,10 +1144,23 @@ function statusMultiplier(statusID) {
   return STATUSES.find((status) => status.id === statusID)?.multiplier || 0;
 }
 
+function statusLabel(statusID) {
+  return STATUSES.find((status) => status.id === statusID)?.label || "未做";
+}
+
+function taskScore(record, task) {
+  return task.points * statusMultiplier(record.entries[task.id] || "none");
+}
+
+function taskScoreByID(record, taskID) {
+  const task = TASKS.find((item) => item.id === taskID);
+  return task ? taskScore(record, task) : 0;
+}
+
 function scoreForDimension(record, dimensionID) {
   return TASKS
     .filter((task) => task.dimension === dimensionID)
-    .reduce((sum, task) => sum + task.points * statusMultiplier(record.entries[task.id] || "none"), 0);
+    .reduce((sum, task) => sum + taskScore(record, task), 0);
 }
 
 function totalScore(record) {
@@ -1284,7 +1415,7 @@ function reviewSummary(period) {
     dimensionAverages,
     strongest,
     weakest,
-    title: titleFor(period, averageScore, strongest, weakest, periodRecords.length),
+    title: periodTitleFor(period, scoredRecords, averageScore, strongest, weakest),
     insight: insightFor(averageScore, strongest, weakest, periodRecords.length),
     nextSuggestion: suggestionFor(weakest, averageScore, periodRecords.length)
   };
@@ -1301,6 +1432,51 @@ function titleFor(period, average, strongest, weakest, recordedDays) {
   if (average >= 18) return "持续推进者";
   if (weakest === "mindset") return "复苏练习生";
   return "重新校准者";
+}
+
+function dailyTitleFor(record) {
+  const reflection = `${record.reflection || ""} ${(record.tags || []).join(" ")}`;
+  const health = scoreForDimension(record, "health");
+  const mindset = scoreForDimension(record, "mindset");
+  const study = scoreForDimension(record, "study");
+
+  if (hasBalanceBonus(record)) return "三维均衡";
+  if (record.isProtectionDay || (totalScore(record) >= 8 && totalScore(record) < 18)) return "低谷不断线";
+  if (taskScoreByID(record, "health_sleep") >= 2) return "早睡新手";
+  if (/(内耗|焦虑|压力|崩|烦|自责|低落)/.test(reflection) && (mindset >= 4 || taskScoreByID(record, "mind_support") > 0)) return "内耗拦截者";
+  if (taskScoreByID(record, "study_input") > 0 && taskScoreByID(record, "study_output") === 0) return "文献启动";
+  if (taskScoreByID(record, "study_output") >= 2 && taskScoreByID(record, "study_output") >= taskScoreByID(record, "study_input")) return "输出比输入重要";
+  if (study >= 6 && taskScoreByID(record, "study_focus") > 0) return "研究生模式";
+  if (health >= 6 && mindset >= 4) return "身体先稳住";
+  if (totalScore(record) >= 23) return "高能推进";
+  return "今日不断线";
+}
+
+function periodTitleFor(period, records, average, strongest, weakest) {
+  if (!records.length) return "等待开局者";
+
+  const reflectionText = records.map((record) => `${record.reflection || ""} ${(record.tags || []).join(" ")}`).join(" ");
+  const balanceDays = records.filter(hasBalanceBonus).length;
+  const outputAverage = averageTaskScore(records, "study_output");
+  const inputAverage = averageTaskScore(records, "study_input");
+  const focusAverage = averageTaskScore(records, "study_focus");
+  const sleepAverage = averageTaskScore(records, "health_sleep");
+  const mindRecoveryAverage = averageTaskScore(records, "mind_recovery") + averageTaskScore(records, "mind_support");
+
+  if (average >= 24 && balanceDays >= Math.ceil(records.length * 0.45)) return "三维均衡";
+  if (average < 18 && records.length >= 4) return "低谷不断线";
+  if (/(内耗|焦虑|压力|崩|烦|自责|低落)/.test(reflectionText) && mindRecoveryAverage >= 3) return "内耗拦截者";
+  if (outputAverage >= 2.5 && outputAverage >= inputAverage) return "输出比输入重要";
+  if (strongest === "study" && focusAverage >= 1.5) return "研究生模式";
+  if (inputAverage >= 2 && outputAverage < 2) return "文献启动";
+  if (sleepAverage >= 2.5) return "早睡新手";
+
+  return titleFor(period, average, strongest, weakest, records.length);
+}
+
+function averageTaskScore(records, taskID) {
+  if (!records.length) return 0;
+  return records.reduce((sum, record) => sum + taskScoreByID(record, taskID), 0) / records.length;
 }
 
 function insightFor(average, strongest, weakest, recordedDays) {
@@ -1335,6 +1511,45 @@ function monthCells() {
   }
 
   return cells;
+}
+
+function trendSeries(period) {
+  const interval = period === "week" ? currentWeekInterval() : currentMonthInterval();
+  const today = parseKey(todayKey());
+  const end = interval.end < addDays(today, 1) ? interval.end : addDays(today, 1);
+  const series = [];
+
+  for (let cursor = interval.start; cursor < end; cursor = addDays(cursor, 1)) {
+    const key = keyFromDate(cursor);
+    const record = state.records[key] ? normalizeRecord(state.records[key], key) : null;
+    series.push({
+      key,
+      label: formatDate(key),
+      record: record && isRecorded(record) ? record : null
+    });
+  }
+
+  return series;
+}
+
+function chartPoints(series, maxValue) {
+  const left = 18;
+  const right = 306;
+  const top = 18;
+  const bottom = 104;
+  const count = Math.max(1, series.length - 1);
+
+  return series.map((item, index) => {
+    const value = item.value === null || item.value === undefined ? null : clamp(Number(item.value), 0, maxValue);
+    const x = series.length === 1 ? (left + right) / 2 : left + ((right - left) * index) / count;
+    const y = value === null ? null : bottom - ((bottom - top) * value) / maxValue;
+    return {
+      ...item,
+      x: Math.round(x * 10) / 10,
+      y: y === null ? null : Math.round(y * 10) / 10,
+      value
+    };
+  });
 }
 
 function heatmapStyle(record) {
@@ -1499,7 +1714,10 @@ async function restoreBackupFromModal() {
 }
 
 async function installApp() {
-  if (!installPrompt) return;
+  if (!installPrompt) {
+    openModal({ type: "install" });
+    return;
+  }
   installPrompt.prompt();
   await installPrompt.userChoice;
   installPrompt = null;
