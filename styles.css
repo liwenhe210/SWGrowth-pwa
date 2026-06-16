@@ -957,6 +957,10 @@ label {
   box-shadow: 0 20px 60px rgba(27, 24, 19, 0.22);
 }
 
+.modal-wide {
+  width: min(100%, 860px);
+}
+
 .modal-header,
 .modal-body,
 .modal-footer {
@@ -1050,6 +1054,64 @@ label {
   font-size: 13px;
 }
 
+.record-conflict-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.conflict-record-card {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fffdf8;
+}
+
+.conflict-record-head {
+  display: grid;
+  gap: 4px;
+}
+
+.conflict-record-head strong {
+  color: #1f6258;
+}
+
+.conflict-record-head span,
+.conflict-record-card p,
+.tag-list em {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.conflict-task-list {
+  display: grid;
+  gap: 6px;
+}
+
+.conflict-task-list div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 0;
+  border-top: 1px solid rgba(32, 33, 36, 0.08);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.conflict-task-list strong {
+  flex-shrink: 0;
+  color: var(--text);
+}
+
+.conflict-actions {
+  flex-wrap: wrap;
+}
+
 .toast {
   position: fixed;
   right: 16px;
@@ -1103,6 +1165,10 @@ label {
   }
 
   .sync-compare {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .record-conflict-grid {
     grid-template-columns: 1fr 1fr;
   }
 

@@ -142,6 +142,7 @@ let sync = {
   autoSyncTimer: null,
   suppressAutoSync: false
 };
+let pendingMerge = null;
 
 let state = loadState();
 let ui = {
@@ -343,7 +344,7 @@ function syncStatusText() {
   if (sync.loading) return "同步中";
   if (sync.error) return "同步异常";
   if (!sync.user) return "未登录";
-  if (sync.lastSyncedAt) return `已同步 ${formatTime(sync.lastSyncedAt)}`;
+  if (sync.lastSyncedAt) return `已同步 ${formatDateTime(sync.lastSyncedAt)}`;
   return "已登录";
 }
 
@@ -870,6 +871,7 @@ function renderModal() {
   if (ui.modal.type === "install") return renderInstallModal();
   if (ui.modal.type === "sync") return renderSyncModal();
   if (ui.modal.type === "cloudConflict") return renderCloudConflictModal(ui.modal.cloudSnapshot);
+  if (ui.modal.type === "recordMergeConflict") return renderRecordMergeConflictModal();
   return "";
 }
 
@@ -962,22 +964,87 @@ function renderBackupModal() {
             <textarea id="backup-json" readonly>${escapeHTML(JSON.stringify(state, null, 2))}</textarea>
           </label>
           <label class="form-row">
-            <span class="field-label">恢复数据</span>
-            <textarea id="restore-json" placeholder="把备份 JSON 粘贴到这里，再点恢复"></textarea>
+            <span class="field-label">导入备份</span>
+            <textarea id="restore-json" placeholder="把备份 JSON 粘贴到这里，再点合并导入"></textarea>
           </label>
           <label class="form-row">
-            <span class="field-label">从文件恢复</span>
+            <span class="field-label">从文件导入</span>
             <input id="restore-file" type="file" accept="application/json,.json" />
           </label>
-          <p class="hint">恢复会覆盖当前浏览器里的本地数据。操作前建议先下载一份当前备份。</p>
+          <p class="hint">导入会默认合并记录，不会因为备份里缺少某天就删除本机已有记录。同一天内容不同会让你逐条选择。</p>
         </div>
         <div class="modal-footer">
           <button class="secondary-btn" data-action="download-backup">下载</button>
-          <button class="secondary-btn" data-action="restore-backup">恢复</button>
+          <button class="secondary-btn" data-action="restore-backup">合并导入</button>
           <button class="primary-btn" data-action="copy-backup">复制</button>
         </div>
       </section>
     </div>
+  `;
+}
+
+function renderRecordMergeConflictModal() {
+  if (!pendingMerge) return "";
+  const conflict = pendingMerge.conflicts[pendingMerge.index];
+  if (!conflict) return "";
+  const incomingLabel = pendingMerge.incomingLabel || "备份";
+  const progress = `${pendingMerge.index + 1}/${pendingMerge.conflicts.length}`;
+
+  return `
+    <div class="modal-backdrop">
+      <section class="modal modal-wide" role="dialog" aria-modal="true" aria-label="记录冲突" data-modal>
+        <div class="modal-header">
+          <h2>${formatDate(conflict.date)} 记录冲突</h2>
+          <button class="ghost-btn" data-action="close-modal">取消</button>
+        </div>
+        <div class="modal-body">
+          <div class="sync-status-card">
+            <strong>需要选择保留哪一版</strong>
+            <p>这是第 ${progress} 条冲突。两边都有内容且不一致，系统不会静默覆盖。</p>
+          </div>
+          <div class="record-conflict-grid">
+            ${renderConflictRecordPreview(conflict.local, "本机版本")}
+            ${renderConflictRecordPreview(conflict.incoming, `${incomingLabel}版本`)}
+          </div>
+        </div>
+        <div class="modal-footer conflict-actions">
+          <button class="secondary-btn" data-action="merge-keep-local">保留本机版本</button>
+          <button class="primary-btn" data-action="merge-use-incoming">使用${incomingLabel}版本</button>
+          <button class="danger-btn" data-action="merge-rerecord">重新记录</button>
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function renderConflictRecordPreview(record, label) {
+  const safeRecord = normalizeRecord(record, record.date);
+  const tags = safeRecord.tags?.length ? safeRecord.tags.map((tag) => `<span>${escapeHTML(tag)}</span>`).join("") : "<em>无标签</em>";
+  const reflection = (safeRecord.reflection || "").trim() || "无总结";
+  const meta = [
+    `${formatNumber(totalScore(safeRecord))}/30 · ${gradeFor(safeRecord)}`,
+    `满意度 ${safeRecord.satisfaction}/5`,
+    safeRecord.isProtectionDay ? "保护日" : "",
+    safeRecord.settledAt ? `记录于 ${formatDateTime(safeRecord.settledAt)}` : ""
+  ].filter(Boolean).join(" · ");
+
+  return `
+    <article class="conflict-record-card">
+      <div class="conflict-record-head">
+        <strong>${label}</strong>
+        <span>${meta}</span>
+      </div>
+      <p>${escapeHTML(reflection)}</p>
+      <div class="tag-list">${tags}</div>
+      <div class="conflict-task-list">
+        ${TASKS.map((task) => `
+          <div>
+            <span>${task.title}</span>
+            <strong>${statusLabel(safeRecord.entries[task.id] || "none")}</strong>
+          </div>
+        `).join("")}
+      </div>
+    </article>
   `;
 }
 
@@ -1101,11 +1168,11 @@ function renderCloudConflictModal(cloudSnapshot) {
               <span>${cloudStateSummary(cloudSnapshot)}</span>
             </div>
           </div>
-          <p class="hint">建议先下载备份，再选择。若你刚在手机记录过，电脑登录时通常选择「使用云端」。若本机数据更新，选择「本机覆盖云端」。</p>
+          <p class="hint">建议先下载备份，再选择。默认同步会合并本机和云端；这里的覆盖选项只适合你明确知道哪一边才是完整数据时使用。</p>
         </div>
         <div class="modal-footer">
           <button class="secondary-btn" data-action="export">先备份</button>
-          <button class="primary-btn" data-action="sync-use-cloud">使用云端</button>
+          <button class="danger-btn" data-action="sync-use-cloud">使用云端覆盖本机</button>
           <button class="secondary-btn" data-action="sync-push">本机覆盖云端</button>
         </div>
       </section>
@@ -1135,6 +1202,9 @@ function bindEvents() {
       if (action === "install") installApp();
       if (action === "download-backup") downloadBackup();
       if (action === "restore-backup") restoreBackupFromModal();
+      if (action === "merge-keep-local") resolvePendingMergeConflict("local");
+      if (action === "merge-use-incoming") resolvePendingMergeConflict("incoming");
+      if (action === "merge-rerecord") resolvePendingMergeConflict("rerecord");
       if (action === "open-sync") openModal({ type: "sync" });
       if (action === "sync-sign-in") signInFromModal();
       if (action === "sync-sign-up") signUpFromModal();
@@ -1849,6 +1919,9 @@ function openModal(modal) {
 }
 
 function closeModal() {
+  if (ui.modal?.type === "recordMergeConflict") {
+    pendingMerge = null;
+  }
   ui.modal = null;
   render();
 }
@@ -1889,17 +1962,208 @@ async function restoreBackupFromModal() {
     }
 
     const restored = normalizeState(JSON.parse(text));
-    state = restored;
-    ui.draft = null;
-    ui.draftDate = null;
-    refreshRewardCooldown();
-    saveState();
-    closeModal();
-    showToast("数据已恢复");
-    render();
+    startStateMerge(restored, {
+      source: "backup",
+      incomingLabel: "备份",
+      successMessage: "备份已合并"
+    });
   } catch {
-    showToast("恢复失败：备份格式不正确");
+    showToast("导入失败：备份格式不正确");
   }
+}
+
+function startStateMerge(incomingValue, options = {}) {
+  const merge = buildStateMerge(state, incomingValue, options);
+  if (!merge.conflicts.length) {
+    commitMergedState(merge);
+    return true;
+  }
+
+  pendingMerge = merge;
+  ui.modal = { type: "recordMergeConflict" };
+  render();
+  return false;
+}
+
+function buildStateMerge(localValue, incomingValue, options = {}) {
+  const localState = normalizeState(clone(localValue));
+  const incomingState = normalizeState(clone(incomingValue));
+  const mergedState = normalizeState(clone(localState));
+  const conflicts = [];
+  const summary = {
+    addedRecords: 0,
+    keptLocalRecords: 0,
+    identicalRecords: 0,
+    conflictRecords: 0,
+    mergedRewards: 0
+  };
+
+  mergedState.rewards = mergeRewards(localState.rewards, incomingState.rewards, summary);
+  mergedState.repairCompletions = mergeRepairCompletions(localState.repairCompletions, incomingState.repairCompletions);
+  mergedState.cooldownUntil = latestISO(localState.cooldownUntil, incomingState.cooldownUntil);
+  mergedState.lastPenaltyWeekKey = localState.lastPenaltyWeekKey || incomingState.lastPenaltyWeekKey || null;
+
+  for (const date of Object.keys(incomingState.records).sort()) {
+    const incomingRecord = normalizeRecord(incomingState.records[date], date);
+    if (!isRecorded(incomingRecord)) continue;
+
+    const localRecord = localState.records[date] ? normalizeRecord(localState.records[date], date) : null;
+    if (!localRecord || !isRecorded(localRecord)) {
+      mergedState.records[date] = incomingRecord;
+      summary.addedRecords += 1;
+      continue;
+    }
+
+    if (recordsEquivalent(localRecord, incomingRecord)) {
+      summary.identicalRecords += 1;
+      continue;
+    }
+
+    conflicts.push({
+      date,
+      local: localRecord,
+      incoming: incomingRecord
+    });
+    summary.conflictRecords += 1;
+  }
+
+  return {
+    source: options.source || "backup",
+    incomingLabel: options.incomingLabel || "备份",
+    successMessage: options.successMessage || "数据已合并",
+    lastSyncedAt: options.lastSyncedAt || null,
+    pushAfterCommit: Boolean(options.pushAfterCommit),
+    index: 0,
+    conflicts,
+    mergedState,
+    summary,
+    reRecordDate: null
+  };
+}
+
+function resolvePendingMergeConflict(choice) {
+  if (!pendingMerge) return;
+  const conflict = pendingMerge.conflicts[pendingMerge.index];
+  if (!conflict) {
+    commitMergedState(pendingMerge);
+    return;
+  }
+
+  if (choice === "incoming") {
+    pendingMerge.mergedState.records[conflict.date] = clone(conflict.incoming);
+  }
+  if (choice === "local") {
+    pendingMerge.mergedState.records[conflict.date] = clone(conflict.local);
+  }
+  if (choice === "rerecord") {
+    delete pendingMerge.mergedState.records[conflict.date];
+    pendingMerge.reRecordDate = pendingMerge.reRecordDate || conflict.date;
+  }
+
+  pendingMerge.index += 1;
+  if (pendingMerge.index < pendingMerge.conflicts.length) {
+    render();
+    return;
+  }
+
+  commitMergedState(pendingMerge);
+}
+
+function commitMergedState(merge) {
+  const reRecordDate = merge.reRecordDate;
+  const pushAfterCommit = merge.pushAfterCommit;
+  const lastSyncedAt = merge.lastSyncedAt;
+  const message = mergeSummaryMessage(merge);
+
+  state = normalizeState(merge.mergedState);
+  ui.draft = null;
+  ui.draftDate = null;
+  if (reRecordDate) {
+    ui.tab = "today";
+    ui.selectedDate = reRecordDate;
+  }
+  refreshRewardCooldown();
+  saveState();
+  if (lastSyncedAt) sync.lastSyncedAt = lastSyncedAt;
+  pendingMerge = null;
+  ui.modal = null;
+  showToast(message);
+  render();
+  if (pushAfterCommit) {
+    pushCloudState({ silent: true });
+  }
+}
+
+function mergeSummaryMessage(merge) {
+  const parts = [];
+  if (merge.summary.addedRecords) parts.push(`新增 ${merge.summary.addedRecords} 天`);
+  if (merge.summary.conflictRecords) parts.push(`处理 ${merge.summary.conflictRecords} 个冲突`);
+  if (merge.summary.mergedRewards) parts.push(`合并 ${merge.summary.mergedRewards} 个奖励`);
+  if (merge.reRecordDate) parts.push(`已跳转到 ${formatDate(merge.reRecordDate)}`);
+  return parts.length ? `${merge.successMessage}：${parts.join("，")}` : merge.successMessage;
+}
+
+function recordsEquivalent(recordA, recordB) {
+  return stableStringify(normalizeRecord(recordA, recordA.date)) === stableStringify(normalizeRecord(recordB, recordB.date));
+}
+
+function mergeRewards(localRewards, incomingRewards, summary) {
+  const merged = localRewards.map((reward) => clone(reward));
+  const byID = new Map(merged.map((reward) => [reward.id, reward]));
+
+  for (const incomingReward of incomingRewards) {
+    const existing = byID.get(incomingReward.id) || merged.find((reward) => rewardMergeKey(reward) === rewardMergeKey(incomingReward));
+    if (!existing) {
+      merged.push(clone(incomingReward));
+      summary.mergedRewards += 1;
+      continue;
+    }
+
+    const before = stableStringify(existing);
+    existing.redeemedDates = uniqueStrings([...(existing.redeemedDates || []), ...(incomingReward.redeemedDates || [])]);
+    existing.archived = Boolean(existing.archived || incomingReward.archived);
+    if (!existing.note && incomingReward.note) existing.note = incomingReward.note;
+    if (stableStringify(existing) !== before) summary.mergedRewards += 1;
+  }
+
+  return merged;
+}
+
+function rewardMergeKey(reward) {
+  return [
+    reward.name,
+    reward.note,
+    reward.cost,
+    reward.requiredWeeklyAverage ?? "",
+    reward.requiredActiveDays ?? "",
+    reward.requiredDimension ?? "",
+    reward.requiredDimensionLevel ?? ""
+  ].join("|");
+}
+
+function mergeRepairCompletions(localItems, incomingItems) {
+  const merged = [...localItems.map((item) => clone(item))];
+  const seen = new Set(merged.map(repairCompletionKey));
+  for (const item of incomingItems) {
+    const key = repairCompletionKey(item);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(clone(item));
+  }
+  return merged;
+}
+
+function repairCompletionKey(item) {
+  return `${item.id || ""}|${item.date || ""}|${item.title || ""}`;
+}
+
+function uniqueStrings(values) {
+  return [...new Set(values.filter(Boolean).map(String))].sort();
+}
+
+function latestISO(valueA, valueB) {
+  const values = [valueA, valueB].filter(Boolean).sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
+  return values[0] || null;
 }
 
 function supabaseConfig() {
@@ -1968,8 +2232,13 @@ async function handleSignedIn() {
   }
 
   if (hasMeaningfulLocalData()) {
-    sync.pendingCloud = cloudSnapshot;
-    openModal({ type: "cloudConflict", cloudSnapshot });
+    startStateMerge(cloudSnapshot.payload, {
+      source: "cloud",
+      incomingLabel: "云端",
+      successMessage: "云端数据已合并",
+      lastSyncedAt: cloudSnapshot.updated_at || new Date().toISOString(),
+      pushAfterCommit: true
+    });
     return;
   }
 
@@ -2078,9 +2347,14 @@ async function pullCloudState({ force = false } = {}) {
       return;
     }
 
-    if (!force && hasMeaningfulLocalData()) {
-      sync.pendingCloud = cloudSnapshot;
-      openModal({ type: "cloudConflict", cloudSnapshot });
+    if (hasMeaningfulLocalData()) {
+      startStateMerge(cloudSnapshot.payload, {
+        source: "cloud",
+        incomingLabel: "云端",
+        successMessage: "云端数据已合并",
+        lastSyncedAt: cloudSnapshot.updated_at || new Date().toISOString(),
+        pushAfterCommit: true
+      });
       return;
     }
 
@@ -2097,7 +2371,7 @@ function usePendingCloudState() {
   applyCloudSnapshot(sync.pendingCloud);
   sync.pendingCloud = null;
   closeModal();
-  showToast("已切换到云端数据");
+  showToast("已使用云端覆盖本机");
 }
 
 function applyCloudSnapshot(cloudSnapshot) {
@@ -2228,7 +2502,12 @@ function formatShortDate(dateKey) {
 function formatDateTime(value) {
   if (!value) return "";
   const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
   return `${date.getMonth() + 1}月${date.getDate()}日 ${`${date.getHours()}`.padStart(2, "0")}:${`${date.getMinutes()}`.padStart(2, "0")}`;
+}
+
+function formatTime(value) {
+  return formatDateTime(value);
 }
 
 function rgba(hex, alpha) {
@@ -2262,5 +2541,13 @@ function escapeAttribute(value) {
 
 function registerServiceWorker() {
   if (!("serviceWorker" in navigator) || location.protocol === "file:") return;
-  navigator.serviceWorker.register("./sw.js").catch(() => {});
+  let refreshing = false;
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (refreshing) return;
+    refreshing = true;
+    window.location.reload();
+  });
+  navigator.serviceWorker.register("./sw.js").then((registration) => {
+    registration.update().catch(() => {});
+  }).catch(() => {});
 }

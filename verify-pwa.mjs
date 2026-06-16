@@ -9,6 +9,7 @@ const appURL = process.argv[2] || "http://127.0.0.1:5173/";
 const port = Number(process.env.CDP_PORT || 9223);
 const viewportWidth = Number(process.env.VERIFY_WIDTH || 390);
 const viewportHeight = Number(process.env.VERIFY_HEIGHT || 844);
+const verifyDelay = Number(process.env.VERIFY_DELAY || 1400);
 const verifyTab = process.env.VERIFY_TAB || "";
 const seedDemo = process.env.VERIFY_SEED === "1";
 const root = resolve(fileURLToPath(new URL(".", import.meta.url)));
@@ -42,7 +43,7 @@ try {
     mobile: viewportWidth < 700
   });
   await client.send("Page.navigate", { url: appURL });
-  await delay(1400);
+  await delay(verifyDelay);
   if (seedDemo) {
     await client.send("Runtime.evaluate", {
       expression: `(() => {

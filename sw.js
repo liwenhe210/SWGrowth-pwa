@@ -1,4 +1,4 @@
-const CACHE_NAME = "sanwei-growth-v7";
+const CACHE_NAME = "sanwei-growth-v8";
 const ASSETS = [
   "./",
   "./index.html",
@@ -30,17 +30,32 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  event.respondWith(
-    caches.match(event.request).then((cached) => {
-      return (
-        cached ||
-        fetch(event.request).catch(() => {
-          if (event.request.mode === "navigate") {
-            return caches.match("./index.html");
-          }
-          return undefined;
-        })
-      );
-    })
-  );
+  const url = new URL(event.request.url);
+  if (url.origin !== self.location.origin) {
+    event.respondWith(fetch(event.request));
+    return;
+  }
+
+  event.respondWith(networkFirst(event.request));
 });
+
+async function networkFirst(request) {
+  const cache = await caches.open(CACHE_NAME);
+  try {
+    const response = await fetch(request);
+    if (response.ok && shouldCache(request)) {
+      cache.put(request, response.clone());
+    }
+    return response;
+  } catch (_error) {
+    const cached = await cache.match(request);
+    if (cached) return cached;
+    if (request.mode === "navigate") return cache.match("./index.html");
+    return new Response("", { status: 504, statusText: "Offline" });
+  }
+}
+
+function shouldCache(request) {
+  const url = new URL(request.url);
+  return !url.pathname.endsWith("/supabase-config.js");
+}
