@@ -152,6 +152,12 @@ label {
   font-size: 13px;
 }
 
+.sync-btn.is-signed-in {
+  border-color: #b7d6cf;
+  background: #e6f0ed;
+  color: #1f6258;
+}
+
 .main {
   width: 100%;
   max-width: 1040px;
@@ -993,6 +999,57 @@ label {
   gap: 10px;
 }
 
+.inline-actions,
+.sync-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.sync-status-card,
+.sync-compare > div {
+  display: grid;
+  gap: 7px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #fffdf8;
+}
+
+.sync-status-card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.sync-status-card code {
+  padding: 2px 5px;
+  border-radius: 5px;
+  background: var(--surface-soft);
+}
+
+.sync-error {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid #e1b2b8;
+  border-radius: var(--radius);
+  background: #fff5f6;
+  color: #a23c49;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.sync-compare {
+  display: grid;
+  gap: 10px;
+}
+
+.sync-compare span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .toast {
   position: fixed;
   right: 16px;
@@ -1042,6 +1099,10 @@ label {
   }
 
   .inline-fields {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .sync-compare {
     grid-template-columns: 1fr 1fr;
   }
 
@@ -1107,7 +1168,7 @@ label {
 
 @media (max-width: 430px) {
   .brand-title {
-    max-width: 168px;
+    max-width: 138px;
     overflow: hidden;
     text-overflow: ellipsis;
   }

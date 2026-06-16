@@ -113,6 +113,8 @@ try {
         bodyScrollWidth: document.body.scrollWidth,
         title: document.querySelector(".brand-title")?.textContent || "",
         activeTab: document.querySelector(".tab-btn.is-active")?.textContent.trim() || "",
+        topHTML: document.querySelector(".top-actions")?.innerHTML || "",
+        scripts: [...document.scripts].map((script) => script.src || "inline"),
         topActions: [...document.querySelectorAll(".top-actions button")].map((button) => button.textContent.trim()),
         charts: document.querySelectorAll(".chart-card").length,
         historyItems: document.querySelectorAll(".record-item").length,

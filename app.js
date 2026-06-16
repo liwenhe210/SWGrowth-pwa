@@ -1,4 +1,6 @@
 const STORAGE_KEY = "sanwei-growth-pwa:v1";
+const SYNC_META_KEY = "sanwei-growth-pwa:sync-meta:v1";
+const SUPABASE_TABLE = "growth_snapshots";
 
 const DIMENSIONS = [
   {
@@ -110,8 +112,36 @@ const TITLE_RULES = [
   "今日不断线 / 高能推进：作为低门槛记录和高分推进的兜底称号。"
 ];
 
+const TITLE_ENGINE = {
+  mode: "rules",
+  daily(record) {
+    return ruleDailyTitleFor(record);
+  },
+  period(period, records, average, strongest, weakest) {
+    return rulePeriodTitleFor(period, records, average, strongest, weakest);
+  },
+  buildDailyPayload(record) {
+    return buildAITitlePayload("day", [record]);
+  },
+  buildPeriodPayload(period, records) {
+    return buildAITitlePayload(period, records);
+  }
+};
+
 const app = document.querySelector("#app");
 let installPrompt = null;
+let sync = {
+  configured: false,
+  ready: false,
+  loading: false,
+  client: null,
+  user: null,
+  lastSyncedAt: null,
+  error: "",
+  pendingCloud: null,
+  autoSyncTimer: null,
+  suppressAutoSync: false
+};
 
 let state = loadState();
 let ui = {
@@ -128,6 +158,7 @@ refreshRewardCooldown();
 saveState();
 render();
 registerServiceWorker();
+initSupabase();
 
 window.addEventListener("beforeinstallprompt", (event) => {
   event.preventDefault();
@@ -224,6 +255,7 @@ function normalizeState(value) {
 
 function saveState() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  queueCloudSync();
 }
 
 function normalizeRecord(record, fallbackDate) {
@@ -263,6 +295,7 @@ function render() {
             </div>
           </div>
           <div class="top-actions">
+            <button class="secondary-btn sync-btn ${sync.user ? "is-signed-in" : ""}" data-action="open-sync">${syncButtonText()}</button>
             <button class="secondary-btn" data-action="install">安装</button>
             <button class="secondary-btn" data-action="export">备份</button>
           </div>
@@ -291,10 +324,27 @@ function render() {
 
 function headerSubtitle() {
   const statsValue = stats();
+  if (sync.user) return `${syncStatusText()} · ${sync.user.email || "已登录"}`;
   if (ui.tab === "character") return `Lv.${statsValue.totalLevel} / ${statsValue.coinsAvailable} 金币`;
   if (ui.tab === "rewards") return rewardLocked() ? "奖励冷却中" : `${activeRewards().length} 个奖励`;
   if (ui.tab === "review") return `${reviewSummary(ui.reviewPeriod).title}`;
   return `${todayKey() === ui.selectedDate ? "今日" : formatDate(ui.selectedDate)} / ${draftRecord().grade}`;
+}
+
+function syncButtonText() {
+  if (!sync.configured) return "本地";
+  if (sync.loading) return "同步中";
+  if (sync.user) return "已同步";
+  return "登录";
+}
+
+function syncStatusText() {
+  if (!sync.configured) return "本地模式";
+  if (sync.loading) return "同步中";
+  if (sync.error) return "同步异常";
+  if (!sync.user) return "未登录";
+  if (sync.lastSyncedAt) return `已同步 ${formatTime(sync.lastSyncedAt)}`;
+  return "已登录";
 }
 
 function tabButton(tab, mark, label) {
@@ -818,6 +868,8 @@ function renderModal() {
   if (ui.modal.type === "addReward") return renderAddRewardModal();
   if (ui.modal.type === "backup") return renderBackupModal();
   if (ui.modal.type === "install") return renderInstallModal();
+  if (ui.modal.type === "sync") return renderSyncModal();
+  if (ui.modal.type === "cloudConflict") return renderCloudConflictModal(ui.modal.cloudSnapshot);
   return "";
 }
 
@@ -961,6 +1013,106 @@ function renderInstallModal() {
   `;
 }
 
+function renderSyncModal() {
+  const config = supabaseConfig();
+  const userEmail = sync.user?.email || "";
+
+  return `
+    <div class="modal-backdrop">
+      <section class="modal" role="dialog" aria-modal="true" aria-label="云同步" data-modal>
+        <div class="modal-header">
+          <h2>云同步</h2>
+          <button class="ghost-btn" data-action="close-modal">关闭</button>
+        </div>
+        <div class="modal-body">
+          ${!sync.configured ? renderSyncConfigHint(config) : sync.user ? renderSignedInSync(userEmail) : renderSignInForm()}
+        </div>
+        <div class="modal-footer">
+          <button class="secondary-btn" data-action="close-modal">关闭</button>
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function renderSyncConfigHint(config) {
+  return `
+    <div class="sync-status-card">
+      <strong>当前是本地模式</strong>
+      <p>要启用电脑和手机自动同步，请先在 Supabase 创建项目，然后把 Project URL 和 anon public key 填到 <code>supabase-config.js</code>。</p>
+      <p class="hint">已检测配置：URL ${config.url ? "已填写" : "未填写"}，anon key ${config.anonKey ? "已填写" : "未填写"}。</p>
+    </div>
+  `;
+}
+
+function renderSignInForm() {
+  return `
+    <div class="sync-status-card">
+      <strong>登录后自动同步</strong>
+      <p>同一账号在电脑和手机登录后会共享一份云端数据；不同账号的数据由 Supabase 权限隔离。</p>
+    </div>
+    ${sync.error ? `<p class="sync-error">${escapeHTML(sync.error)}</p>` : ""}
+    <label class="form-row">
+      <span class="field-label">邮箱</span>
+      <input id="sync-email" type="email" autocomplete="email" placeholder="you@example.com" />
+    </label>
+    <label class="form-row">
+      <span class="field-label">密码</span>
+      <input id="sync-password" type="password" autocomplete="current-password" placeholder="至少 6 位" />
+    </label>
+    <div class="inline-actions">
+      <button class="primary-btn" data-action="sync-sign-in" ${sync.loading ? "disabled" : ""}>登录</button>
+      <button class="secondary-btn" data-action="sync-sign-up" ${sync.loading ? "disabled" : ""}>注册</button>
+    </div>
+  `;
+}
+
+function renderSignedInSync(userEmail) {
+  return `
+    <div class="sync-status-card">
+      <strong>${escapeHTML(userEmail)}</strong>
+      <p>${syncStatusText()}</p>
+      <p class="hint">本地仍会保存一份离线缓存；登录状态下，结算、兑换奖励、恢复备份等操作会自动上传到云端。</p>
+    </div>
+    ${sync.error ? `<p class="sync-error">${escapeHTML(sync.error)}</p>` : ""}
+    <div class="sync-actions">
+      <button class="primary-btn" data-action="sync-pull" ${sync.loading ? "disabled" : ""}>拉取云端</button>
+      <button class="secondary-btn" data-action="sync-push" ${sync.loading ? "disabled" : ""}>上传本机</button>
+      <button class="danger-btn" data-action="sync-sign-out" ${sync.loading ? "disabled" : ""}>退出登录</button>
+    </div>
+  `;
+}
+
+function renderCloudConflictModal(cloudSnapshot) {
+  return `
+    <div class="modal-backdrop">
+      <section class="modal" role="dialog" aria-modal="true" aria-label="选择同步方向" data-modal>
+        <div class="modal-header">
+          <h2>选择同步方向</h2>
+        </div>
+        <div class="modal-body">
+          <div class="sync-compare">
+            <div>
+              <strong>本机</strong>
+              <span>${localStateSummary()}</span>
+            </div>
+            <div>
+              <strong>云端</strong>
+              <span>${cloudStateSummary(cloudSnapshot)}</span>
+            </div>
+          </div>
+          <p class="hint">建议先下载备份，再选择。若你刚在手机记录过，电脑登录时通常选择「使用云端」。若本机数据更新，选择「本机覆盖云端」。</p>
+        </div>
+        <div class="modal-footer">
+          <button class="secondary-btn" data-action="export">先备份</button>
+          <button class="primary-btn" data-action="sync-use-cloud">使用云端</button>
+          <button class="secondary-btn" data-action="sync-push">本机覆盖云端</button>
+        </div>
+      </section>
+    </div>
+  `;
+}
+
 function bindEvents() {
   app.querySelectorAll("[data-tab]").forEach((button) => {
     button.addEventListener("click", () => {
@@ -983,6 +1135,13 @@ function bindEvents() {
       if (action === "install") installApp();
       if (action === "download-backup") downloadBackup();
       if (action === "restore-backup") restoreBackupFromModal();
+      if (action === "open-sync") openModal({ type: "sync" });
+      if (action === "sync-sign-in") signInFromModal();
+      if (action === "sync-sign-up") signUpFromModal();
+      if (action === "sync-sign-out") signOut();
+      if (action === "sync-pull") pullCloudState({ force: true });
+      if (action === "sync-push") pushCloudState({ manual: true });
+      if (action === "sync-use-cloud") usePendingCloudState();
     });
   });
 
@@ -1435,6 +1594,14 @@ function titleFor(period, average, strongest, weakest, recordedDays) {
 }
 
 function dailyTitleFor(record) {
+  return TITLE_ENGINE.daily(record);
+}
+
+function periodTitleFor(period, records, average, strongest, weakest) {
+  return TITLE_ENGINE.period(period, records, average, strongest, weakest);
+}
+
+function ruleDailyTitleFor(record) {
   const reflection = `${record.reflection || ""} ${(record.tags || []).join(" ")}`;
   const health = scoreForDimension(record, "health");
   const mindset = scoreForDimension(record, "mindset");
@@ -1452,7 +1619,7 @@ function dailyTitleFor(record) {
   return "今日不断线";
 }
 
-function periodTitleFor(period, records, average, strongest, weakest) {
+function rulePeriodTitleFor(period, records, average, strongest, weakest) {
   if (!records.length) return "等待开局者";
 
   const reflectionText = records.map((record) => `${record.reflection || ""} ${(record.tags || []).join(" ")}`).join(" ");
@@ -1472,6 +1639,28 @@ function periodTitleFor(period, records, average, strongest, weakest) {
   if (sleepAverage >= 2.5) return "早睡新手";
 
   return titleFor(period, average, strongest, weakest, records.length);
+}
+
+function buildAITitlePayload(period, records) {
+  const normalizedRecords = records.filter(Boolean);
+  const scores = normalizedRecords.map((record) => ({
+    date: record.date,
+    totalScore: totalScore(record),
+    grade: gradeFor(record),
+    dimensionScores: Object.fromEntries(DIMENSIONS.map((dimension) => [dimension.id, scoreForDimension(record, dimension.id)])),
+    taskScores: Object.fromEntries(TASKS.map((task) => [task.id, taskScore(record, task)])),
+    reflection: record.reflection || "",
+    satisfaction: record.satisfaction,
+    tags: record.tags || [],
+    isProtectionDay: record.isProtectionDay
+  }));
+
+  return {
+    period,
+    app: "科研人才养成计划",
+    titleStyle: "温和、有趣、具体、带研究生日常感，不羞辱用户",
+    records: scores
+  };
 }
 
 function averageTaskScore(records, taskID) {
@@ -1711,6 +1900,296 @@ async function restoreBackupFromModal() {
   } catch {
     showToast("恢复失败：备份格式不正确");
   }
+}
+
+function supabaseConfig() {
+  const config = window.SW_GROWTH_SUPABASE_CONFIG || {};
+  return {
+    url: (config.url || "").trim(),
+    anonKey: (config.anonKey || "").trim(),
+    sdkUrl: (config.sdkUrl || "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm").trim()
+  };
+}
+
+async function initSupabase() {
+  const config = supabaseConfig();
+  sync.configured = Boolean(config.url && config.anonKey);
+  if (!sync.configured) {
+    render();
+    return;
+  }
+
+  sync.loading = true;
+  sync.error = "";
+  render();
+
+  try {
+    const module = await import(config.sdkUrl);
+    sync.client = module.createClient(config.url, config.anonKey);
+    const { data, error } = await sync.client.auth.getSession();
+    if (error) throw error;
+    sync.user = data.session?.user || null;
+
+    sync.client.auth.onAuthStateChange((_event, session) => {
+      sync.user = session?.user || null;
+      saveSyncMeta({ userID: sync.user?.id || null, email: sync.user?.email || null });
+      if (sync.user) {
+        handleSignedIn().catch((error) => {
+          sync.error = readableSyncError(error);
+          render();
+        });
+      } else {
+        render();
+      }
+    });
+
+    if (sync.user) await handleSignedIn();
+  } catch (error) {
+    sync.error = readableSyncError(error);
+  } finally {
+    sync.loading = false;
+    render();
+  }
+}
+
+async function handleSignedIn() {
+  if (!sync.user) return;
+  saveSyncMeta({ userID: sync.user.id, email: sync.user.email || null });
+  const cloudSnapshot = await fetchCloudSnapshot();
+  if (!cloudSnapshot) {
+    await pushCloudState({ silent: true });
+    return;
+  }
+
+  if (statesEquivalent(cloudSnapshot.payload)) {
+    sync.lastSyncedAt = cloudSnapshot.updated_at || new Date().toISOString();
+    render();
+    return;
+  }
+
+  if (hasMeaningfulLocalData()) {
+    sync.pendingCloud = cloudSnapshot;
+    openModal({ type: "cloudConflict", cloudSnapshot });
+    return;
+  }
+
+  applyCloudSnapshot(cloudSnapshot);
+}
+
+async function signInFromModal() {
+  const credentials = syncCredentials();
+  if (!credentials) return;
+  await withSyncLoading(async () => {
+    const { error } = await sync.client.auth.signInWithPassword(credentials);
+    if (error) throw error;
+    closeModal();
+  });
+}
+
+async function signUpFromModal() {
+  const credentials = syncCredentials();
+  if (!credentials) return;
+  await withSyncLoading(async () => {
+    const { error } = await sync.client.auth.signUp(credentials);
+    if (error) throw error;
+    showToast("注册完成，请按 Supabase 邮件设置确认要求登录");
+  });
+}
+
+function syncCredentials() {
+  if (!sync.client) {
+    showToast("Supabase 尚未初始化");
+    return null;
+  }
+
+  const email = app.querySelector("#sync-email")?.value.trim();
+  const password = app.querySelector("#sync-password")?.value || "";
+  if (!email || !password) {
+    showToast("请填写邮箱和密码");
+    return null;
+  }
+  return { email, password };
+}
+
+async function signOut() {
+  if (!sync.client) return;
+  await withSyncLoading(async () => {
+    const { error } = await sync.client.auth.signOut();
+    if (error) throw error;
+    sync.user = null;
+    sync.pendingCloud = null;
+    sync.lastSyncedAt = null;
+    closeModal();
+  });
+}
+
+function queueCloudSync() {
+  if (sync.suppressAutoSync || !sync.client || !sync.user) return;
+  window.clearTimeout(sync.autoSyncTimer);
+  sync.autoSyncTimer = window.setTimeout(() => {
+    pushCloudState({ silent: true });
+  }, 900);
+}
+
+async function fetchCloudSnapshot() {
+  if (!sync.client || !sync.user) return null;
+  const { data, error } = await sync.client
+    .from(SUPABASE_TABLE)
+    .select("payload, updated_at")
+    .eq("user_id", sync.user.id)
+    .maybeSingle();
+  if (error) throw error;
+  return data || null;
+}
+
+async function pushCloudState({ manual = false, silent = false } = {}) {
+  if (!sync.client || !sync.user) {
+    if (manual) openModal({ type: "sync" });
+    return;
+  }
+
+  await withSyncLoading(async () => {
+    const { error } = await sync.client.from(SUPABASE_TABLE).upsert(
+      {
+        user_id: sync.user.id,
+        payload: cloudSafeState(),
+        updated_at: new Date().toISOString()
+      },
+      { onConflict: "user_id" }
+    );
+    if (error) throw error;
+    sync.lastSyncedAt = new Date().toISOString();
+    sync.pendingCloud = null;
+    if (!silent) showToast("已上传到云端");
+  });
+}
+
+async function pullCloudState({ force = false } = {}) {
+  if (!sync.client || !sync.user) {
+    openModal({ type: "sync" });
+    return;
+  }
+
+  await withSyncLoading(async () => {
+    const cloudSnapshot = await fetchCloudSnapshot();
+    if (!cloudSnapshot) {
+      showToast("云端还没有数据，已上传本机数据");
+      await pushCloudState({ silent: true });
+      return;
+    }
+
+    if (!force && hasMeaningfulLocalData()) {
+      sync.pendingCloud = cloudSnapshot;
+      openModal({ type: "cloudConflict", cloudSnapshot });
+      return;
+    }
+
+    applyCloudSnapshot(cloudSnapshot);
+    showToast("已使用云端数据");
+  });
+}
+
+function usePendingCloudState() {
+  if (!sync.pendingCloud) {
+    closeModal();
+    return;
+  }
+  applyCloudSnapshot(sync.pendingCloud);
+  sync.pendingCloud = null;
+  closeModal();
+  showToast("已切换到云端数据");
+}
+
+function applyCloudSnapshot(cloudSnapshot) {
+  const payload = cloudSnapshot?.payload;
+  if (!payload || typeof payload !== "object") return;
+  sync.suppressAutoSync = true;
+  state = normalizeState(payload);
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  sync.suppressAutoSync = false;
+  sync.lastSyncedAt = cloudSnapshot.updated_at || new Date().toISOString();
+  ui.draft = null;
+  ui.draftDate = null;
+  refreshRewardCooldown();
+  render();
+}
+
+async function withSyncLoading(task) {
+  sync.loading = true;
+  sync.error = "";
+  render();
+  try {
+    await task();
+  } catch (error) {
+    sync.error = readableSyncError(error);
+    showToast(sync.error);
+  } finally {
+    sync.loading = false;
+    render();
+  }
+}
+
+function cloudSafeState() {
+  return normalizeState(clone(state));
+}
+
+function statesEquivalent(payload) {
+  try {
+    return stableStringify(normalizeState(payload || {})) === stableStringify(cloudSafeState());
+  } catch {
+    return false;
+  }
+}
+
+function stableStringify(value) {
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function hasMeaningfulLocalData() {
+  return sortedRecords().some(isRecorded) || state.rewards.some((reward) => reward.redeemedDates?.length);
+}
+
+function localStateSummary() {
+  return `${sortedRecords().filter(isRecorded).length} 条记录，${state.rewards.reduce((sum, reward) => sum + reward.redeemedDates.length, 0)} 次奖励兑换`;
+}
+
+function cloudStateSummary(cloudSnapshot) {
+  try {
+    const payload = normalizeState(cloudSnapshot.payload || {});
+    const records = Object.values(payload.records || {}).filter(isRecorded).length;
+    const redeemed = payload.rewards.reduce((sum, reward) => sum + reward.redeemedDates.length, 0);
+    const updated = cloudSnapshot.updated_at ? `，${formatDateTime(cloudSnapshot.updated_at)}` : "";
+    return `${records} 条记录，${redeemed} 次奖励兑换${updated}`;
+  } catch {
+    return "云端数据可用，但摘要读取失败";
+  }
+}
+
+function saveSyncMeta(meta) {
+  localStorage.setItem(SYNC_META_KEY, JSON.stringify({ ...loadSyncMeta(), ...meta, updatedAt: new Date().toISOString() }));
+}
+
+function loadSyncMeta() {
+  try {
+    return JSON.parse(localStorage.getItem(SYNC_META_KEY) || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function readableSyncError(error) {
+  const message = error?.message || String(error || "同步失败");
+  if (/Invalid login credentials/i.test(message)) return "邮箱或密码不正确";
+  if (/Email not confirmed/i.test(message)) return "邮箱尚未确认，请先查看确认邮件";
+  if (/Failed to fetch|NetworkError/i.test(message)) return "网络连接失败，请稍后重试";
+  return message;
 }
 
 async function installApp() {

@@ -34,6 +34,8 @@ $env:VERIFY_WIDTH="390"; $env:VERIFY_HEIGHT="844"; $env:VERIFY_TAB="review"; $en
 - `manifest.webmanifest`：PWA 名称、图标、安装信息。
 - `sw.js`：离线缓存。每次改动上线后，建议递增 `CACHE_NAME`。
 - `assets/`：主屏幕图标和浏览器图标。
+- `supabase-config.js`：Supabase 项目 URL 和 anon public key。
+- `supabase-schema.sql`：云同步数据库表和 RLS 策略。
 - `SYNC_AND_AI_PLAN.md`：账号同步和 AI 称号接入方案。
 
 ## iOS 图标更新
@@ -65,5 +67,7 @@ iOS 可能会缓存旧的主屏幕图标。上传新图标后：
 - Row Level Security：限制用户只能读取和写入自己的数据。
 
 静态 GitHub Pages 可以继续作为前端托管，不需要自建服务器；浏览器端通过 Supabase SDK 读写云端数据。
+
+具体步骤见 `SUPABASE_SETUP.md`。
 
 更详细的同步和 AI 称号方案见 `SYNC_AND_AI_PLAN.md`。
