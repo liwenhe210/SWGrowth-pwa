@@ -343,7 +343,7 @@ function syncStatusText() {
   if (sync.loading) return "同步中";
   if (sync.error) return "同步异常";
   if (!sync.user) return "未登录";
-  if (sync.lastSyncedAt) return `已同步 ${formatTime(sync.lastSyncedAt)}`;
+  if (sync.lastSyncedAt) return `已同步 ${formatDateTime(sync.lastSyncedAt)}`;
   return "已登录";
 }
 
