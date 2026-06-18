@@ -324,6 +324,71 @@ label {
   text-align: center;
 }
 
+.ai-review-panel {
+  border-color: #b8c7d3;
+  background: #f8fafb;
+}
+
+.ai-consent-row {
+  padding: 4px 0;
+  border-top: 1px solid rgba(67, 95, 119, 0.14);
+  border-bottom: 1px solid rgba(67, 95, 119, 0.14);
+}
+
+.ai-review-content {
+  display: grid;
+  gap: 10px;
+  padding: 13px;
+  border: 1px solid #c6d3dc;
+  border-radius: var(--radius);
+  background: #eef3f6;
+}
+
+.ai-review-content.is-compact {
+  margin-top: 4px;
+  padding: 11px;
+}
+
+.ai-title-line {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ai-title-line span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.ai-title-line strong {
+  color: #435f77;
+  font-size: 17px;
+  text-align: right;
+}
+
+.ai-review-content p {
+  margin: 0;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.ai-advice-list {
+  display: grid;
+  gap: 7px;
+}
+
+.ai-advice-list div {
+  padding: 8px 10px;
+  border-left: 3px solid #849bad;
+  background: rgba(255, 255, 255, 0.68);
+  color: #344754;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
 .dimension-block + .dimension-block {
   border-top: 1px solid var(--line);
   margin-top: 12px;
@@ -867,6 +932,7 @@ label {
   border: 1px solid rgba(0, 0, 0, 0.04);
   background: var(--cell-bg);
   color: var(--cell-color);
+  box-shadow: var(--cell-outline, none);
   font-size: 12px;
   font-weight: 800;
 }

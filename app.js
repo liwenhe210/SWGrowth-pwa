@@ -1,6 +1,7 @@
 const STORAGE_KEY = "sanwei-growth-pwa:v1";
 const SYNC_META_KEY = "sanwei-growth-pwa:sync-meta:v1";
 const SUPABASE_TABLE = "growth_snapshots";
+const AI_FUNCTION_NAME = "ai-game-master";
 
 const DIMENSIONS = [
   {
@@ -143,6 +144,10 @@ let sync = {
   suppressAutoSync: false
 };
 let pendingMerge = null;
+let aiRuntime = {
+  generatingDates: new Set(),
+  errors: {}
+};
 
 let state = loadState();
 let ui = {
@@ -212,7 +217,11 @@ function defaultState() {
     weeklyGoal: 21,
     cooldownUntil: null,
     lastPenaltyWeekKey: null,
-    repairCompletions: []
+    repairCompletions: [],
+    aiSettings: {
+      enabled: false,
+      shareReflection: true
+    }
   };
 }
 
@@ -233,6 +242,10 @@ function normalizeState(value) {
   merged.rewards = Array.isArray(merged.rewards) && merged.rewards.length ? merged.rewards : base.rewards;
   merged.repairCompletions = Array.isArray(merged.repairCompletions) ? merged.repairCompletions : [];
   merged.weeklyGoal = clamp(Number(merged.weeklyGoal || 21), 12, 30);
+  merged.aiSettings = {
+    enabled: Boolean(merged.aiSettings?.enabled),
+    shareReflection: merged.aiSettings?.shareReflection !== false
+  };
 
   for (const key of Object.keys(merged.records)) {
     merged.records[key] = normalizeRecord(merged.records[key], key);
@@ -267,7 +280,30 @@ function normalizeRecord(record, fallbackDate) {
     reflection: record.reflection || "",
     satisfaction: clamp(Number(record.satisfaction || 3), 1, 5),
     tags: Array.isArray(record.tags) ? record.tags : [],
-    settledAt: record.settledAt || null
+    settledAt: record.settledAt || null,
+    aiReview: normalizeAIReview(record.aiReview)
+  };
+}
+
+function normalizeAIReview(value) {
+  if (!value || typeof value !== "object") return null;
+  const advice = Array.isArray(value.advice)
+    ? value.advice.map((item) => String(item || "").trim()).filter(Boolean).slice(0, 2)
+    : [];
+  const title = String(value.title || "").trim();
+  const analysis = String(value.analysis || "").trim();
+  const sourceHash = String(value.sourceHash || "").trim();
+  if (!title || !analysis || !sourceHash) return null;
+  return {
+    title,
+    analysis,
+    advice,
+    tone: String(value.tone || "balanced"),
+    model: String(value.model || ""),
+    promptVersion: String(value.promptVersion || ""),
+    reflectionShared: value.reflectionShared !== false,
+    sourceHash,
+    generatedAt: value.generatedAt || null
   };
 }
 
@@ -393,6 +429,8 @@ function renderDailyView() {
         </div>
       </div>
 
+      ${renderDailyAIReviewPanel(record)}
+
       <div class="panel panel-pad">
         <div class="panel-title">
           <h2>9 个核心得分点</h2>
@@ -446,6 +484,107 @@ function renderGradeBadge(record) {
         <strong>${record.grade}</strong>
         <span>${formatNumber(record.totalScore)}/30</span>
       </div>
+    </div>
+  `;
+}
+
+function renderDailyAIReviewPanel(record) {
+  const review = validDailyAIReview(record);
+  const generating = aiRuntime.generatingDates.has(record.date);
+  const error = aiRuntime.errors[record.date];
+  const recorded = isRecorded(record) && Boolean(record.settledAt);
+
+  if (review) {
+    return `
+      <div class="panel panel-pad ai-review-panel">
+        <div class="panel-title">
+          <h2>AI 成长回顾</h2>
+          <span class="hint">${review.generatedAt ? formatDateTime(review.generatedAt) : ""}</span>
+        </div>
+        ${renderAIReviewContent(review)}
+        <div class="inline-actions">
+          ${state.aiSettings.enabled && sync.user ? `<button class="secondary-btn" data-action="ai-generate-daily" data-ai-date="${record.date}" ${generating ? "disabled" : ""}>重新生成</button>` : ""}
+          ${state.aiSettings.enabled ? `<button class="ghost-btn" data-action="ai-disable">关闭 AI</button>` : ""}
+        </div>
+      </div>
+    `;
+  }
+
+  if (!state.aiSettings.enabled) {
+    return `
+      <div class="panel panel-pad ai-review-panel">
+        <div class="panel-title"><h2>AI 成长回顾</h2></div>
+        <p class="hint">启用后，每次结算可生成动态称号、表现分析和两条低压力建议。打分数据会发送给 DeepSeek。</p>
+        <label class="toggle-row ai-consent-row">
+          <span>
+            <strong>允许发送一句话总结</strong>
+            <span class="hint">关闭后只发送任务状态、分数、满意度和标签。</span>
+          </span>
+          <input id="ai-share-reflection" type="checkbox" ${state.aiSettings.shareReflection ? "checked" : ""} />
+        </label>
+        <button class="primary-btn" data-action="ai-enable">启用 AI 每日回顾</button>
+      </div>
+    `;
+  }
+
+  if (!sync.user) {
+    return `
+      <div class="panel panel-pad ai-review-panel">
+        <div class="panel-title"><h2>AI 成长回顾</h2></div>
+        <p class="hint">AI 请求需要通过登录账号安全调用 Supabase Edge Function。</p>
+        <button class="secondary-btn" data-action="open-sync">登录后生成</button>
+      </div>
+    `;
+  }
+
+  if (!recorded) {
+    return `
+      <div class="panel panel-pad ai-review-panel">
+        <div class="panel-title"><h2>AI 成长回顾</h2></div>
+        <p class="hint">完成今日结算后生成称号、分析和建议。</p>
+        ${renderAIReflectionSetting()}
+      </div>
+    `;
+  }
+
+  return `
+    <div class="panel panel-pad ai-review-panel">
+      <div class="panel-title">
+        <h2>AI 成长回顾</h2>
+        <span class="hint">${generating ? "生成中" : "尚未生成"}</span>
+      </div>
+      <p class="hint">${generating ? "AI 正在读取今天的得分结构并生成成长反馈。" : error ? escapeHTML(error) : "现有规则称号仍然可用，AI 失败不会影响今日记录。"}</p>
+      ${renderAIReflectionSetting()}
+      <button class="primary-btn" data-action="ai-generate-daily" data-ai-date="${record.date}" ${generating ? "disabled" : ""}>${generating ? "生成中..." : error ? "重试生成" : "生成今日回顾"}</button>
+    </div>
+  `;
+}
+
+function renderAIReflectionSetting() {
+  return `
+    <label class="toggle-row ai-consent-row">
+      <span>
+        <strong>发送一句话总结</strong>
+        <span class="hint">关闭后 AI 不会收到总结正文。</span>
+      </span>
+      <input id="ai-share-reflection" type="checkbox" ${state.aiSettings.shareReflection ? "checked" : ""} />
+    </label>
+  `;
+}
+
+function renderAIReviewContent(review, compact = false) {
+  return `
+    <div class="ai-review-content ${compact ? "is-compact" : ""}">
+      <div class="ai-title-line">
+        <span>称号</span>
+        <strong>${escapeHTML(review.title)}</strong>
+      </div>
+      <p>${escapeHTML(review.analysis)}</p>
+      ${review.advice.length ? `
+        <div class="ai-advice-list">
+          ${review.advice.map((item) => `<div>${escapeHTML(item)}</div>`).join("")}
+        </div>
+      ` : ""}
     </div>
   `;
 }
@@ -809,6 +948,7 @@ function renderRecordHistoryPanel() {
 function renderRecordHistoryItem(record) {
   const tags = record.tags?.length ? record.tags.map((tag) => `<span>${escapeHTML(tag)}</span>`).join("") : `<span>无标签</span>`;
   const reflection = record.reflection?.trim() ? escapeHTML(record.reflection.trim()) : "未填写一句话总结";
+  const aiReview = validDailyAIReview(record);
 
   return `
     <details class="record-item">
@@ -821,6 +961,7 @@ function renderRecordHistoryItem(record) {
       </summary>
       <p>${reflection}</p>
       <div class="tag-list">${tags}</div>
+      ${aiReview ? renderAIReviewContent(aiReview, true) : ""}
       <div class="record-score-detail">
         ${DIMENSIONS.map((dimension) => renderRecordDimensionDetail(record, dimension)).join("")}
       </div>
@@ -1212,6 +1353,9 @@ function bindEvents() {
       if (action === "sync-pull") pullCloudState({ force: true });
       if (action === "sync-push") pushCloudState({ manual: true });
       if (action === "sync-use-cloud") usePendingCloudState();
+      if (action === "ai-enable") enableDailyAI();
+      if (action === "ai-disable") disableDailyAI();
+      if (action === "ai-generate-daily") generateDailyAIReview(button.dataset.aiDate, { force: true });
     });
   });
 
@@ -1258,6 +1402,15 @@ function bindEvents() {
   if (reflection) {
     reflection.addEventListener("input", () => {
       draftRecord().reflection = reflection.value;
+    });
+  }
+
+  const aiShareReflection = app.querySelector("#ai-share-reflection");
+  if (aiShareReflection) {
+    aiShareReflection.addEventListener("change", () => {
+      state.aiSettings.shareReflection = aiShareReflection.checked;
+      saveState();
+      render();
     });
   }
 
@@ -1329,6 +1482,9 @@ function settleDraft() {
   hydrateRecordComputed(ui.draft);
   ui.modal = { type: "settlement", snapshot: settlementSnapshot(ui.draft) };
   render();
+  if (state.aiSettings.enabled && sync.user) {
+    generateDailyAIReview(ui.selectedDate);
+  }
 }
 
 function settlementSnapshot(record) {
@@ -1347,6 +1503,192 @@ function settlementSnapshot(record) {
   };
 }
 
+function enableDailyAI() {
+  const shareReflection = app.querySelector("#ai-share-reflection");
+  if (shareReflection) state.aiSettings.shareReflection = shareReflection.checked;
+  state.aiSettings.enabled = true;
+  saveState();
+  if (!sync.user) {
+    showToast("AI 已启用，请先登录");
+    openModal({ type: "sync" });
+    return;
+  }
+  const record = state.records[ui.selectedDate];
+  render();
+  if (record && isRecorded(record) && record.settledAt) {
+    generateDailyAIReview(ui.selectedDate);
+  }
+}
+
+function disableDailyAI() {
+  state.aiSettings.enabled = false;
+  saveState();
+  render();
+}
+
+async function generateDailyAIReview(dateKey, { force = false } = {}) {
+  const record = state.records[dateKey] ? normalizeRecord(state.records[dateKey], dateKey) : null;
+  if (!record || !isRecorded(record) || !record.settledAt) {
+    showToast("请先完成这一天的结算");
+    return;
+  }
+  if (!state.aiSettings.enabled) {
+    showToast("请先启用 AI 每日回顾");
+    return;
+  }
+  if (!sync.client || !sync.user) {
+    openModal({ type: "sync" });
+    return;
+  }
+  if (aiRuntime.generatingDates.has(dateKey)) return;
+
+  const sourceHash = dailyReviewSourceHash(record);
+  if (!force && validDailyAIReview(record)) return;
+
+  aiRuntime.generatingDates.add(dateKey);
+  delete aiRuntime.errors[dateKey];
+  render();
+
+  try {
+    const response = await invokeAIFunction({
+      mode: "daily_review",
+      sourceHash,
+      force,
+      payload: buildDailyAIRequestPayload(record)
+    });
+    const review = normalizeAIReview({
+      ...response.review,
+      sourceHash: response.sourceHash || sourceHash,
+      model: response.model || response.review?.model,
+      promptVersion: response.promptVersion || response.review?.promptVersion,
+      reflectionShared: state.aiSettings.shareReflection,
+      generatedAt: response.generatedAt || response.review?.generatedAt || new Date().toISOString()
+    });
+    if (!review) throw new Error("AI 返回内容格式不完整");
+
+    state.records[dateKey] = normalizeRecord({
+      ...state.records[dateKey],
+      aiReview: review
+    }, dateKey);
+    if (ui.draftDate === dateKey && ui.draft) {
+      ui.draft.aiReview = clone(review);
+    }
+    saveState();
+    showToast(response.cached ? "已读取缓存的 AI 回顾" : "AI 成长回顾已生成");
+  } catch (error) {
+    aiRuntime.errors[dateKey] = readableAIError(error);
+    showToast("AI 暂时不可用，已保留本地称号");
+  } finally {
+    aiRuntime.generatingDates.delete(dateKey);
+    render();
+  }
+}
+
+async function invokeAIFunction(body) {
+  const config = supabaseConfig();
+  const { data, error } = await sync.client.auth.getSession();
+  if (error) throw error;
+  const accessToken = data.session?.access_token;
+  if (!accessToken) throw new Error("登录状态已失效，请重新登录");
+
+  const response = await fetch(`${config.url}/functions/v1/${AI_FUNCTION_NAME}`, {
+    method: "POST",
+    headers: {
+      apikey: config.anonKey,
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(body)
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(result.error || result.message || `AI 服务请求失败 (${response.status})`);
+    error.status = response.status;
+    throw error;
+  }
+  return result;
+}
+
+function buildDailyAIRequestPayload(record) {
+  const previousRecords = sortedRecords()
+    .filter((item) => isRecorded(item) && item.date <= record.date)
+    .slice(-7)
+    .map((item) => ({
+      date: item.date,
+      totalScore: totalScore(item),
+      health: scoreForDimension(item, "health"),
+      mindset: scoreForDimension(item, "mindset"),
+      study: scoreForDimension(item, "study")
+    }));
+
+  return {
+    date: record.date,
+    totalScore: totalScore(record),
+    grade: gradeFor(record),
+    dimensions: Object.fromEntries(DIMENSIONS.map((dimension) => [dimension.id, scoreForDimension(record, dimension.id)])),
+    tasks: Object.fromEntries(TASKS.map((task) => [task.id, {
+      status: record.entries[task.id] || "none",
+      score: taskScore(record, task),
+      maxScore: task.points
+    }])),
+    reflection: state.aiSettings.shareReflection ? record.reflection || "" : "",
+    reflectionShared: state.aiSettings.shareReflection,
+    satisfaction: record.satisfaction,
+    tags: record.tags || [],
+    isProtectionDay: record.isProtectionDay,
+    recentTrend: previousRecords
+  };
+}
+
+function dailyReviewSourceHash(record, shareReflection = state.aiSettings.shareReflection) {
+  const payload = {
+    date: record.date,
+    entries: Object.fromEntries(TASKS.map((task) => [task.id, record.entries[task.id] || "none"])),
+    reflection: shareReflection ? record.reflection || "" : "",
+    reflectionShared: shareReflection,
+    satisfaction: record.satisfaction,
+    tags: record.tags || [],
+    isProtectionDay: record.isProtectionDay
+  };
+  return `daily-${hashString(stableStringify(payload))}`;
+}
+
+function validDailyAIReview(record) {
+  const review = normalizeAIReview(record?.aiReview);
+  if (!review) return null;
+  return review.sourceHash === dailyReviewSourceHash(record, review.reflectionShared) ? review : null;
+}
+
+function hashString(value) {
+  let hash1 = 1779033703;
+  let hash2 = 3144134277;
+  let hash3 = 1013904242;
+  let hash4 = 2773480762;
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value.charCodeAt(index);
+    hash1 = hash2 ^ Math.imul(hash1 ^ character, 597399067);
+    hash2 = hash3 ^ Math.imul(hash2 ^ character, 2869860233);
+    hash3 = hash4 ^ Math.imul(hash3 ^ character, 951274213);
+    hash4 = hash1 ^ Math.imul(hash4 ^ character, 2716044179);
+  }
+  hash1 = Math.imul(hash3 ^ (hash1 >>> 18), 597399067);
+  hash2 = Math.imul(hash4 ^ (hash2 >>> 22), 2869860233);
+  hash3 = Math.imul(hash1 ^ (hash3 >>> 17), 951274213);
+  hash4 = Math.imul(hash2 ^ (hash4 >>> 19), 2716044179);
+  return [hash1, hash2, hash3, hash4]
+    .map((hash) => (hash >>> 0).toString(16).padStart(8, "0"))
+    .join("");
+}
+
+function readableAIError(error) {
+  const message = error?.message || String(error || "AI 生成失败");
+  if (error?.status === 404) return "AI Edge Function 尚未部署";
+  if (error?.status === 401) return "登录状态已失效，请重新登录";
+  if (error?.status === 429) return "今天的 AI 生成次数已达上限";
+  if (/Failed to fetch|NetworkError/i.test(message)) return "网络连接失败，请稍后重试";
+  return message;
+}
+
 function getRecord(dateKey) {
   return state.records[dateKey] ? normalizeRecord(state.records[dateKey], dateKey) : emptyRecord(dateKey);
 }
@@ -1359,7 +1701,8 @@ function emptyRecord(dateKey) {
     reflection: "",
     satisfaction: 3,
     tags: [],
-    settledAt: null
+    settledAt: null,
+    aiReview: null
   };
 }
 
@@ -1664,6 +2007,8 @@ function titleFor(period, average, strongest, weakest, recordedDays) {
 }
 
 function dailyTitleFor(record) {
+  const aiReview = validDailyAIReview(record);
+  if (aiReview) return aiReview.title;
   return TITLE_ENGINE.daily(record);
 }
 
@@ -1813,13 +2158,18 @@ function chartPoints(series, maxValue) {
 
 function heatmapStyle(record) {
   if (!record) return "--cell-bg:#f0ede6; --cell-color:#8b8981";
-  if (record.isProtectionDay) return "--cell-bg:#dff0ed; --cell-color:#225f55";
   const score = totalScore(record);
-  const opacity = clamp(score / 30, 0.18, 0.88);
-  if (score >= 23) return `--cell-bg:${rgba("#168268", opacity)}; --cell-color:#13231f`;
-  if (score >= 18) return `--cell-bg:${rgba("#4a58b8", opacity)}; --cell-color:#ffffff`;
-  if (score >= 12) return `--cell-bg:${rgba("#b06b14", opacity)}; --cell-color:#1f1710`;
-  return `--cell-bg:${rgba("#c84d5c", opacity)}; --cell-color:#ffffff`;
+  const palette = [
+    { min: 0, background: "#dce5eb", color: "#40505d" },
+    { min: 6, background: "#c6d3dc", color: "#344754" },
+    { min: 12, background: "#aabcc9", color: "#273b49" },
+    { min: 18, background: "#849bad", color: "#ffffff" },
+    { min: 23, background: "#637d92", color: "#ffffff" },
+    { min: 27, background: "#435f77", color: "#ffffff" }
+  ];
+  const tone = [...palette].reverse().find((item) => score >= item.min) || palette[0];
+  const protectionOutline = record.isProtectionDay ? "inset 0 0 0 2px rgba(255,255,255,0.72)" : "none";
+  return `--cell-bg:${tone.background}; --cell-color:${tone.color}; --cell-outline:${protectionOutline}`;
 }
 
 function currentWeekInterval() {
@@ -2015,6 +2365,7 @@ function buildStateMerge(localValue, incomingValue, options = {}) {
     }
 
     if (recordsEquivalent(localRecord, incomingRecord)) {
+      mergedState.records[date] = mergeEquivalentRecords(localRecord, incomingRecord);
       summary.identicalRecords += 1;
       continue;
     }
@@ -2104,7 +2455,33 @@ function mergeSummaryMessage(merge) {
 }
 
 function recordsEquivalent(recordA, recordB) {
-  return stableStringify(normalizeRecord(recordA, recordA.date)) === stableStringify(normalizeRecord(recordB, recordB.date));
+  return stableStringify(recordCoreForMerge(recordA)) === stableStringify(recordCoreForMerge(recordB));
+}
+
+function recordCoreForMerge(record) {
+  const normalized = normalizeRecord(record, record.date);
+  return {
+    date: normalized.date,
+    entries: normalized.entries,
+    isProtectionDay: normalized.isProtectionDay,
+    reflection: normalized.reflection,
+    satisfaction: normalized.satisfaction,
+    tags: normalized.tags,
+    settledAt: normalized.settledAt
+  };
+}
+
+function mergeEquivalentRecords(localRecord, incomingRecord) {
+  const local = normalizeRecord(localRecord, localRecord.date);
+  const incoming = normalizeRecord(incomingRecord, incomingRecord.date);
+  const reviews = [local.aiReview, incoming.aiReview]
+    .map(normalizeAIReview)
+    .filter(Boolean)
+    .sort((a, b) => new Date(b.generatedAt || 0).getTime() - new Date(a.generatedAt || 0).getTime());
+  return normalizeRecord({
+    ...local,
+    aiReview: reviews[0] || null
+  }, local.date);
 }
 
 function mergeRewards(localRewards, incomingRewards, summary) {

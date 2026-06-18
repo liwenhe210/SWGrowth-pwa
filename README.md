@@ -20,6 +20,11 @@
 
 配置步骤见 `SUPABASE_SETUP.md`。同步启用后，GitHub Pages 继续托管前端，Supabase 负责账号、数据表和不同账号之间的数据隔离。
 
+## DeepSeek AI
+
+- `AI_SETUP.md`：每日 AI 称号、分析和建议的部署步骤。
+- `AI_INTEGRATION_PLAN.md`：每日/周期称号、AI 任务和随机奖励的分阶段方案。
+
 ## Windows 本地运行
 
 在项目根目录运行：

@@ -1,0 +1,4 @@
+project_id = "zemhjqfxdqfsmsbtckcq"
+
+[functions.ai-game-master]
+verify_jwt = true
