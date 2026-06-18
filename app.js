@@ -1576,8 +1576,9 @@ async function generateDailyAIReview(dateKey, { force = false } = {}) {
     saveState();
     showToast(response.cached ? "已读取缓存的 AI 回顾" : "AI 成长回顾已生成");
   } catch (error) {
-    aiRuntime.errors[dateKey] = readableAIError(error);
-    showToast("AI 暂时不可用，已保留本地称号");
+    const message = readableAIError(error);
+    aiRuntime.errors[dateKey] = message;
+    showToast(`AI 生成失败：${message}`);
   } finally {
     aiRuntime.generatingDates.delete(dateKey);
     render();
