@@ -3,8 +3,9 @@
 当前已实现阶段一：
 
 - 每日动态称号。
-- 每日表现分析。
-- 1 至 2 条行动建议。
+- 每日“今日旁白”。
+- 按 55% 温柔冒险、25% 科研轻喜剧、15% 基地运营、5% 诗意奇遇抽取文案风格。
+- 一项次日可勾选的 AI 支线，完成后获得 5 金币。
 - 今日页面与每日记录回看展示。
 - 本地规则回退。
 - 相同记录缓存、每日调用限制、登录鉴权。
@@ -17,7 +18,7 @@ Supabase Dashboard 的 `Edge Functions > Secrets` 中应包含：
 | --- | --- |
 | `DEEPSEEK_API_KEY` | 真实 DeepSeek API Key，仅填写 Key 本身 |
 | `DEEPSEEK_MODEL` | `deepseek-v4-flash` |
-| `AI_PROMPT_VERSION` | `daily-review-v1` |
+| `AI_PROMPT_VERSION` | `daily-review-v2` |
 
 不要把 `NAME=` 一起填进 Value，也不要把引号填进去。
 
@@ -30,7 +31,9 @@ Supabase Dashboard 的 `Edge Functions > Secrets` 中应包含：
 3. 点击 `New query`。
 4. 打开项目文件 `supabase-ai-schema.sql`。
 5. 粘贴全部内容并点击 `Run`。
-6. 在 `Table Editor` 中确认出现 `ai_generation_logs`。
+6. 在 `Table Editor` 中确认出现 `ai_generation_logs`和`ai_prompt_configs`。
+
+如果之前已经运行过旧版SQL，请重新运行当前文件。它会补建所需表，并新增或更新 `daily-review-v2` Prompt 配置。
 
 该表只供 Edge Function 的 service role 使用。普通登录用户不能直接读取，避免泄露 AI 调用日志。
 
@@ -69,7 +72,7 @@ git commit -m "Add DeepSeek daily AI reviews"
 git push
 ```
 
-等待 GitHub Pages 部署完成。Service Worker 缓存已更新为 `sanwei-growth-v10`。
+等待 GitHub Pages 部署完成。Service Worker 缓存已更新为 `sanwei-growth-v12`。
 
 ## 5. 使用方法
 
@@ -78,7 +81,8 @@ git push
 3. 选择是否允许发送一句话总结。
 4. 点击 `启用 AI 每日回顾`。
 5. 完成每日打分并点击 `今日结算`。
-6. AI 会在后台生成称号、分析和建议。
+6. AI 会在后台生成称号、今日旁白和一项“明日支线”。
+7. 次日起可在今日页的“昨日支线”或历史记录中勾选完成，确认后获得 5 金币。
 
 若当天已经结算，可以点击 `生成今日回顾`。记录内容修改后，旧 AI 回顾会自动失效，重新结算即可生成新版。
 
@@ -111,6 +115,10 @@ deepseek-v4-flash
 进入 `Edge Functions > ai-game-master > Logs`。
 
 AI 调用缓存和用量摘要可在 `ai_generation_logs` 表查看。
+
+### 显示“AI 返回的不是有效 JSON”
+
+请重新部署最新的 `supabase/functions/ai-game-master/index.ts`。新版解析器可以处理 DeepSeek 偶尔返回的 Markdown JSON 代码块或 JSON 前后的说明文字，同时仍会验证称号、分析和建议字段。
 
 ## 7. 安全说明
 

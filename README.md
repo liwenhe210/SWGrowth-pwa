@@ -22,8 +22,10 @@
 
 ## DeepSeek AI
 
-- `AI_SETUP.md`：每日 AI 称号、分析和建议的部署步骤。
+- `AI_SETUP.md`：每日 AI 称号、今日旁白、次日支线和 5 金币奖励的部署步骤。
 - `AI_INTEGRATION_PLAN.md`：每日/周期称号、AI 任务和随机奖励的分阶段方案。
+- `PROMPT_GUIDE.md`：Prompt位置、版本和约束修改方法。
+- `REMOTE_PUBLISH_WORKFLOW.md`：iPhone远程维护和安全发布GitHub。
 
 ## Windows 本地运行
 

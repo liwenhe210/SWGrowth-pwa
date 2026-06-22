@@ -375,18 +375,91 @@ label {
   line-height: 1.55;
 }
 
-.ai-advice-list {
+.ai-narration {
   display: grid;
-  gap: 7px;
+  gap: 5px;
 }
 
-.ai-advice-list div {
-  padding: 8px 10px;
-  border-left: 3px solid #849bad;
-  background: rgba(255, 255, 255, 0.68);
+.ai-narration > span,
+.ai-advice-heading span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.advice-quest-panel {
+  border-color: #d1b77d;
+  background: #fffaf0;
+}
+
+.quest-reward,
+.ai-advice-heading strong {
+  color: #9a6214;
+  font-size: 13px;
+}
+
+.ai-advice-quest {
+  display: grid;
+  gap: 7px;
+  padding: 10px;
+  border: 1px solid #d5c7a6;
+  border-radius: var(--radius);
+  background: rgba(255, 253, 248, 0.84);
+}
+
+.ai-advice-quest.is-standalone {
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.ai-advice-quest.is-complete {
+  border-color: #acc8bd;
+  background: #f0f7f4;
+}
+
+.ai-advice-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.ai-advice-task {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
   color: #344754;
   font-size: 13px;
   line-height: 1.45;
+}
+
+.ai-advice-task input {
+  width: 18px;
+  height: 18px;
+  margin: 1px 0 0;
+  accent-color: #246b61;
+}
+
+.ai-advice-task input:not(:disabled),
+.ai-advice-task input:not(:disabled) + span {
+  cursor: pointer;
+}
+
+.advice-status {
+  padding-left: 30px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.advice-confirm-preview {
+  padding: 12px;
+  border-left: 3px solid #b8862d;
+  background: #fffaf0;
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.55;
 }
 
 .dimension-block + .dimension-block {

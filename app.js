@@ -218,6 +218,7 @@ function defaultState() {
     cooldownUntil: null,
     lastPenaltyWeekKey: null,
     repairCompletions: [],
+    adviceCompletions: [],
     aiSettings: {
       enabled: false,
       shareReflection: true
@@ -241,6 +242,9 @@ function normalizeState(value) {
   merged.records = typeof merged.records === "object" && !Array.isArray(merged.records) ? merged.records : {};
   merged.rewards = Array.isArray(merged.rewards) && merged.rewards.length ? merged.rewards : base.rewards;
   merged.repairCompletions = Array.isArray(merged.repairCompletions) ? merged.repairCompletions : [];
+  merged.adviceCompletions = Array.isArray(merged.adviceCompletions)
+    ? mergeAdviceCompletions([], merged.adviceCompletions)
+    : [];
   merged.weeklyGoal = clamp(Number(merged.weeklyGoal || 21), 12, 30);
   merged.aiSettings = {
     enabled: Boolean(merged.aiSettings?.enabled),
@@ -288,7 +292,7 @@ function normalizeRecord(record, fallbackDate) {
 function normalizeAIReview(value) {
   if (!value || typeof value !== "object") return null;
   const advice = Array.isArray(value.advice)
-    ? value.advice.map((item) => String(item || "").trim()).filter(Boolean).slice(0, 2)
+    ? value.advice.map((item) => String(item || "").trim()).filter(Boolean).slice(0, 1)
     : [];
   const title = String(value.title || "").trim();
   const analysis = String(value.analysis || "").trim();
@@ -299,11 +303,26 @@ function normalizeAIReview(value) {
     analysis,
     advice,
     tone: String(value.tone || "balanced"),
+    style: String(value.style || ""),
     model: String(value.model || ""),
     promptVersion: String(value.promptVersion || ""),
     reflectionShared: value.reflectionShared !== false,
     sourceHash,
     generatedAt: value.generatedAt || null
+  };
+}
+
+function normalizeAdviceCompletion(value) {
+  if (!value || typeof value !== "object") return null;
+  const sourceDate = String(value.sourceDate || "");
+  const completedAt = String(value.completedAt || "");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(sourceDate) || !completedAt) return null;
+  return {
+    sourceDate,
+    advice: String(value.advice || "").trim(),
+    completedAt,
+    coins: 5,
+    sourceHash: String(value.sourceHash || "")
   };
 }
 
@@ -429,6 +448,8 @@ function renderDailyView() {
         </div>
       </div>
 
+      ${renderPreviousAdviceQuest()}
+
       ${renderDailyAIReviewPanel(record)}
 
       <div class="panel panel-pad">
@@ -501,7 +522,7 @@ function renderDailyAIReviewPanel(record) {
           <h2>AI 成长回顾</h2>
           <span class="hint">${review.generatedAt ? formatDateTime(review.generatedAt) : ""}</span>
         </div>
-        ${renderAIReviewContent(review)}
+        ${renderAIReviewContent(review, false, record.date)}
         <div class="inline-actions">
           ${state.aiSettings.enabled && sync.user ? `<button class="secondary-btn" data-action="ai-generate-daily" data-ai-date="${record.date}" ${generating ? "disabled" : ""}>重新生成</button>` : ""}
           ${state.aiSettings.enabled ? `<button class="ghost-btn" data-action="ai-disable">关闭 AI</button>` : ""}
@@ -514,7 +535,7 @@ function renderDailyAIReviewPanel(record) {
     return `
       <div class="panel panel-pad ai-review-panel">
         <div class="panel-title"><h2>AI 成长回顾</h2></div>
-        <p class="hint">启用后，每次结算可生成动态称号、表现分析和两条低压力建议。打分数据会发送给 DeepSeek。</p>
+        <p class="hint">启用后，每次结算可生成动态称号、今日旁白和一项次日支线。打分数据会发送给 DeepSeek。</p>
         <label class="toggle-row ai-consent-row">
           <span>
             <strong>允许发送一句话总结</strong>
@@ -541,7 +562,7 @@ function renderDailyAIReviewPanel(record) {
     return `
       <div class="panel panel-pad ai-review-panel">
         <div class="panel-title"><h2>AI 成长回顾</h2></div>
-        <p class="hint">完成今日结算后生成称号、分析和建议。</p>
+        <p class="hint">完成今日结算后生成称号、今日旁白和次日支线。</p>
         ${renderAIReflectionSetting()}
       </div>
     `;
@@ -572,19 +593,70 @@ function renderAIReflectionSetting() {
   `;
 }
 
-function renderAIReviewContent(review, compact = false) {
+function renderAIReviewContent(review, compact = false, sourceDate = "") {
   return `
     <div class="ai-review-content ${compact ? "is-compact" : ""}">
       <div class="ai-title-line">
         <span>称号</span>
         <strong>${escapeHTML(review.title)}</strong>
       </div>
-      <p>${escapeHTML(review.analysis)}</p>
-      ${review.advice.length ? `
-        <div class="ai-advice-list">
-          ${review.advice.map((item) => `<div>${escapeHTML(item)}</div>`).join("")}
+      <div class="ai-narration">
+        <span>今日旁白</span>
+        <p>${escapeHTML(review.analysis)}</p>
+      </div>
+      ${review.advice.length && sourceDate ? renderAIAdviceTask(sourceDate, review) : ""}
+    </div>
+  `;
+}
+
+function renderPreviousAdviceQuest() {
+  if (ui.selectedDate !== todayKey()) return "";
+  const sourceDate = keyFromDate(addDays(parseKey(todayKey()), -1));
+  const record = state.records[sourceDate] ? normalizeRecord(state.records[sourceDate], sourceDate) : null;
+  const review = record ? validDailyAIReview(record) : null;
+  if (!review?.advice?.length) return "";
+
+  return `
+    <div class="panel panel-pad advice-quest-panel">
+      <div class="panel-title">
+        <h2>昨日支线</h2>
+        <span class="quest-reward">+5 金币</span>
+      </div>
+      ${renderAIAdviceTask(sourceDate, review, true)}
+    </div>
+  `;
+}
+
+function renderAIAdviceTask(sourceDate, review, standalone = false) {
+  const advice = review.advice[0];
+  if (!advice) return "";
+  const completion = adviceCompletionFor(sourceDate);
+  const displayedAdvice = completion?.advice || advice;
+  const available = sourceDate < todayKey();
+  const statusText = completion
+    ? `已于 ${formatDateTime(completion.completedAt)} 领取`
+    : available
+      ? "完成后可领取 5 金币"
+      : "明日起可勾选";
+
+  return `
+    <div class="ai-advice-quest ${standalone ? "is-standalone" : ""} ${completion ? "is-complete" : ""}">
+      ${standalone ? "" : `
+        <div class="ai-advice-heading">
+          <span>明日支线</span>
+          <strong>+5 金币</strong>
         </div>
-      ` : ""}
+      `}
+      <label class="ai-advice-task">
+        <input
+          type="checkbox"
+          data-complete-advice="${sourceDate}"
+          ${completion ? "checked" : ""}
+          ${completion || !available ? "disabled" : ""}
+        />
+        <span>${escapeHTML(displayedAdvice)}</span>
+      </label>
+      <div class="advice-status">${statusText}</div>
     </div>
   `;
 }
@@ -961,7 +1033,7 @@ function renderRecordHistoryItem(record) {
       </summary>
       <p>${reflection}</p>
       <div class="tag-list">${tags}</div>
-      ${aiReview ? renderAIReviewContent(aiReview, true) : ""}
+      ${aiReview ? renderAIReviewContent(aiReview, true, record.date) : ""}
       <div class="record-score-detail">
         ${DIMENSIONS.map((dimension) => renderRecordDimensionDetail(record, dimension)).join("")}
       </div>
@@ -1013,6 +1085,7 @@ function renderModal() {
   if (ui.modal.type === "sync") return renderSyncModal();
   if (ui.modal.type === "cloudConflict") return renderCloudConflictModal(ui.modal.cloudSnapshot);
   if (ui.modal.type === "recordMergeConflict") return renderRecordMergeConflictModal();
+  if (ui.modal.type === "adviceCompletion") return renderAdviceCompletionModal(ui.modal);
   return "";
 }
 
@@ -1085,6 +1158,27 @@ function renderAddRewardModal() {
         <div class="modal-footer">
           <button class="secondary-btn" data-action="close-modal">取消</button>
           <button class="primary-btn" data-action="save-reward">保存</button>
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function renderAdviceCompletionModal(modal) {
+  return `
+    <div class="modal-backdrop">
+      <section class="modal" role="dialog" aria-modal="true" aria-label="完成明日支线" data-modal>
+        <div class="modal-header">
+          <h2>完成明日支线</h2>
+          <button class="ghost-btn" data-action="close-modal">关闭</button>
+        </div>
+        <div class="modal-body">
+          <div class="advice-confirm-preview">${escapeHTML(modal.advice)}</div>
+          <p class="hint">确认完成后获得 5 金币。每个记录日期的支线奖励只能领取一次。</p>
+        </div>
+        <div class="modal-footer">
+          <button class="secondary-btn" data-action="close-modal">取消</button>
+          <button class="primary-btn" data-action="confirm-advice-completion" data-advice-source="${modal.sourceDate}">确认完成</button>
         </div>
       </section>
     </div>
@@ -1356,6 +1450,7 @@ function bindEvents() {
       if (action === "ai-enable") enableDailyAI();
       if (action === "ai-disable") disableDailyAI();
       if (action === "ai-generate-daily") generateDailyAIReview(button.dataset.aiDate, { force: true });
+      if (action === "confirm-advice-completion") completeAdviceQuest(button.dataset.adviceSource);
     });
   });
 
@@ -1413,6 +1508,13 @@ function bindEvents() {
       render();
     });
   }
+
+  app.querySelectorAll("[data-complete-advice]").forEach((checkbox) => {
+    checkbox.addEventListener("change", () => {
+      if (!checkbox.checked) return;
+      openAdviceCompletionModal(checkbox.dataset.completeAdvice);
+    });
+  });
 
   const tags = app.querySelector("#tags");
   if (tags) {
@@ -1621,6 +1723,11 @@ function buildDailyAIRequestPayload(record) {
       mindset: scoreForDimension(item, "mindset"),
       study: scoreForDimension(item, "study")
     }));
+  const recentTitles = sortedRecords()
+    .filter((item) => isRecorded(item) && item.date <= record.date)
+    .map((item) => validDailyAIReview(item)?.title || "")
+    .filter(Boolean)
+    .slice(-7);
 
   return {
     date: record.date,
@@ -1637,8 +1744,59 @@ function buildDailyAIRequestPayload(record) {
     satisfaction: record.satisfaction,
     tags: record.tags || [],
     isProtectionDay: record.isProtectionDay,
-    recentTrend: previousRecords
+    recentTrend: previousRecords,
+    recentTitles
   };
+}
+
+function adviceCompletionFor(sourceDate) {
+  return state.adviceCompletions.find((item) => item.sourceDate === sourceDate) || null;
+}
+
+function openAdviceCompletionModal(sourceDate) {
+  if (sourceDate >= todayKey()) {
+    showToast("这项支线明日起可以完成");
+    render();
+    return;
+  }
+  if (adviceCompletionFor(sourceDate)) {
+    showToast("这项支线奖励已经领取");
+    render();
+    return;
+  }
+  const record = state.records[sourceDate] ? normalizeRecord(state.records[sourceDate], sourceDate) : null;
+  const review = record ? validDailyAIReview(record) : null;
+  const advice = review?.advice?.[0];
+  if (!advice) {
+    showToast("没有找到可完成的支线");
+    render();
+    return;
+  }
+  openModal({
+    type: "adviceCompletion",
+    sourceDate,
+    advice,
+    sourceHash: review.sourceHash
+  });
+}
+
+function completeAdviceQuest(sourceDate) {
+  if (!ui.modal || ui.modal.type !== "adviceCompletion" || ui.modal.sourceDate !== sourceDate) return;
+  if (sourceDate >= todayKey() || adviceCompletionFor(sourceDate)) {
+    closeModal();
+    return;
+  }
+  state.adviceCompletions.push({
+    sourceDate,
+    advice: ui.modal.advice,
+    completedAt: new Date().toISOString(),
+    coins: 5,
+    sourceHash: ui.modal.sourceHash || ""
+  });
+  saveState();
+  ui.modal = null;
+  showToast("支线完成，获得 5 金币");
+  render();
 }
 
 function dailyReviewSourceHash(record, shareReflection = state.aiSettings.shareReflection) {
@@ -1784,6 +1942,7 @@ function stats() {
     }
     coinsEarned += coinsForRecord(record);
   }
+  coinsEarned += state.adviceCompletions.reduce((sum, item) => sum + Number(item.coins || 5), 0);
 
   const coinsSpent = state.rewards.reduce((sum, reward) => sum + reward.cost * reward.redeemedDates.length, 0);
   const levels = DIMENSIONS.map((dimension) => levelForXP(xp[dimension.id]));
@@ -2351,6 +2510,7 @@ function buildStateMerge(localValue, incomingValue, options = {}) {
 
   mergedState.rewards = mergeRewards(localState.rewards, incomingState.rewards, summary);
   mergedState.repairCompletions = mergeRepairCompletions(localState.repairCompletions, incomingState.repairCompletions);
+  mergedState.adviceCompletions = mergeAdviceCompletions(localState.adviceCompletions, incomingState.adviceCompletions);
   mergedState.cooldownUntil = latestISO(localState.cooldownUntil, incomingState.cooldownUntil);
   mergedState.lastPenaltyWeekKey = localState.lastPenaltyWeekKey || incomingState.lastPenaltyWeekKey || null;
 
@@ -2533,6 +2693,19 @@ function mergeRepairCompletions(localItems, incomingItems) {
 
 function repairCompletionKey(item) {
   return `${item.id || ""}|${item.date || ""}|${item.title || ""}`;
+}
+
+function mergeAdviceCompletions(localItems, incomingItems) {
+  const merged = new Map();
+  for (const rawItem of [...localItems, ...incomingItems]) {
+    const item = normalizeAdviceCompletion(rawItem);
+    if (!item) continue;
+    const existing = merged.get(item.sourceDate);
+    if (!existing || new Date(item.completedAt).getTime() < new Date(existing.completedAt).getTime()) {
+      merged.set(item.sourceDate, clone(item));
+    }
+  }
+  return [...merged.values()].sort((a, b) => a.sourceDate.localeCompare(b.sourceDate));
 }
 
 function uniqueStrings(values) {
