@@ -156,6 +156,7 @@ let ui = {
   draftDate: null,
   draft: null,
   reviewPeriod: "week",
+  reviewAnchorDate: todayKey(),
   modal: null,
   toast: null
 };
@@ -383,7 +384,7 @@ function headerSubtitle() {
   if (sync.user) return `${syncStatusText()} · ${sync.user.email || "已登录"}`;
   if (ui.tab === "character") return `Lv.${statsValue.totalLevel} / ${statsValue.coinsAvailable} 金币`;
   if (ui.tab === "rewards") return rewardLocked() ? "奖励冷却中" : `${activeRewards().length} 个奖励`;
-  if (ui.tab === "review") return `${reviewSummary(ui.reviewPeriod).title}`;
+  if (ui.tab === "review") return `${formatReviewPeriodLabel(ui.reviewPeriod, ui.reviewAnchorDate)} · ${reviewSummary(ui.reviewPeriod, ui.reviewAnchorDate).title}`;
   return `${todayKey() === ui.selectedDate ? "今日" : formatDate(ui.selectedDate)} / ${draftRecord().grade}`;
 }
 
@@ -860,13 +861,28 @@ function renderRewardCard(reward) {
 }
 
 function renderReviewView() {
-  const summary = reviewSummary(ui.reviewPeriod);
+  const summary = reviewSummary(ui.reviewPeriod, ui.reviewAnchorDate);
+  const periodLabel = formatReviewPeriodLabel(ui.reviewPeriod, ui.reviewAnchorDate);
+  const periodUnit = periodUnitLabel(ui.reviewPeriod);
+  const currentPeriod = isCurrentReviewPeriod(ui.reviewPeriod, ui.reviewAnchorDate);
 
   return `
     <section class="view">
       <div class="segmented">
         <button class="${ui.reviewPeriod === "week" ? "is-active" : ""}" data-period="week">每周</button>
         <button class="${ui.reviewPeriod === "month" ? "is-active" : ""}" data-period="month">每月</button>
+      </div>
+
+      <div class="panel panel-pad period-toolbar">
+        <button class="secondary-btn" data-review-shift="-1">上一${periodUnit}</button>
+        <div class="period-label">
+          <strong>${periodLabel}</strong>
+          <span class="hint">${currentPeriod ? "当前周期" : "历史周期"}</span>
+        </div>
+        <div class="period-actions">
+          <button class="secondary-btn" data-review-shift="1" ${currentPeriod ? "disabled" : ""}>下一${periodUnit}</button>
+          ${currentPeriod ? "" : `<button class="ghost-btn" data-action="review-today">回到当前</button>`}
+        </div>
       </div>
 
       <div class="panel panel-pad">
@@ -897,15 +913,15 @@ function renderReviewView() {
         ` : ""}
       </div>
 
-      ${renderTrendChartsPanel(ui.reviewPeriod)}
+      ${renderTrendChartsPanel(ui.reviewPeriod, ui.reviewAnchorDate)}
 
-      ${ui.reviewPeriod === "week" ? renderWeeklyFocusPanel() : renderMonthPanel()}
+      ${ui.reviewPeriod === "week" && currentPeriod ? renderWeeklyFocusPanel() : ""}
+      ${ui.reviewPeriod === "month" ? renderMonthPanel() : ""}
 
-      ${renderRecordHistoryPanel()}
+      ${renderRecordHistoryPanel(summary)}
     </section>
   `;
 }
-
 function renderWeeklyFocusPanel() {
   return `
     <div class="panel panel-pad">
@@ -931,15 +947,15 @@ function renderMonthPanel() {
     <div class="panel panel-pad">
       <div class="panel-title"><h2>月度热力图</h2></div>
       <div class="heatmap">
-        ${monthCells().map(renderMonthCell).join("")}
+        ${monthCells(ui.reviewAnchorDate).map(renderMonthCell).join("")}
       </div>
       <p class="hint">颜色越深表示当天得分越高；空白代表尚未记录。</p>
     </div>
   `;
 }
 
-function renderTrendChartsPanel(period) {
-  const series = trendSeries(period);
+function renderTrendChartsPanel(period, anchorDateKey = ui.reviewAnchorDate) {
+  const series = trendSeries(period, anchorDateKey);
   const recordedCount = series.filter((item) => item.record).length;
 
   return `
@@ -995,28 +1011,25 @@ function renderLineChart(title, series, maxValue, color) {
   `;
 }
 
-function renderRecordHistoryPanel() {
-  const rows = sortedRecords()
-    .filter(isRecorded)
+function renderRecordHistoryPanel(summary = reviewSummary(ui.reviewPeriod, ui.reviewAnchorDate)) {
+  const rows = summary.periodRecords
     .slice()
-    .reverse()
-    .slice(0, 14);
+    .sort((a, b) => b.date.localeCompare(a.date));
 
   return `
     <div class="panel panel-pad">
       <div class="panel-title">
         <h2>每日记录回看</h2>
-        <span class="hint">最近 ${rows.length} 条</span>
+        <span class="hint">${formatReviewPeriodLabel(summary.period, summary.anchorDate)} · ${rows.length} 条</span>
       </div>
       ${
         rows.length
           ? `<div class="record-list">${rows.map(renderRecordHistoryItem).join("")}</div>`
-          : emptyState("还没有可回看的记录", "完成一次今日结算后，这里会显示总结、满意度和标签。")
+          : emptyState("这个周期还没有记录", "切换到有记录的周或月，或完成一次今日结算后再回来查看。")
       }
     </div>
   `;
 }
-
 function renderRecordHistoryItem(record) {
   const tags = record.tags?.length ? record.tags.map((tag) => `<span>${escapeHTML(tag)}</span>`).join("") : `<span>无标签</span>`;
   const reflection = record.reflection?.trim() ? escapeHTML(record.reflection.trim()) : "未填写一句话总结";
@@ -1431,6 +1444,10 @@ function bindEvents() {
       if (action === "open-add-reward") openModal({ type: "addReward" });
       if (action === "save-reward") saveRewardFromModal();
       if (action === "save-weekly-focus") saveWeeklyFocus();
+      if (action === "review-today") {
+        ui.reviewAnchorDate = todayKey();
+        render();
+      }
       if (action === "close-modal") closeModal();
       if (action === "copy-backup") copyBackup();
       if (action === "export") openModal({ type: "backup" });
@@ -1526,6 +1543,13 @@ function bindEvents() {
   app.querySelectorAll("[data-period]").forEach((button) => {
     button.addEventListener("click", () => {
       ui.reviewPeriod = button.dataset.period;
+      render();
+    });
+  });
+
+  app.querySelectorAll("[data-review-shift]").forEach((button) => {
+    button.addEventListener("click", () => {
+      ui.reviewAnchorDate = shiftReviewAnchor(ui.reviewPeriod, ui.reviewAnchorDate, Number(button.dataset.reviewShift));
       render();
     });
   });
@@ -2114,8 +2138,8 @@ function previousWeekSummary() {
   };
 }
 
-function reviewSummary(period) {
-  const interval = period === "week" ? currentWeekInterval() : currentMonthInterval();
+function reviewSummary(period, anchorDateKey = todayKey()) {
+  const interval = reviewInterval(period, anchorDateKey);
   const periodRecords = sortedRecords().filter((record) => {
     const date = parseKey(record.date);
     return date >= interval.start && date < interval.end && isRecorded(record);
@@ -2139,6 +2163,9 @@ function reviewSummary(period) {
 
   return {
     period,
+    anchorDate: anchorDateKey,
+    interval,
+    periodRecords,
     averageScore,
     recordedDays: periodRecords.length,
     protectionDays: periodRecords.filter((record) => record.isProtectionDay).length,
@@ -2152,7 +2179,6 @@ function reviewSummary(period) {
     nextSuggestion: suggestionFor(weakest, averageScore, periodRecords.length)
   };
 }
-
 function titleFor(period, average, strongest, weakest, recordedDays) {
   if (!recordedDays) return "等待开局者";
   if (average >= 27) return period === "week" ? "三维满格者" : "稳定进阶者";
@@ -2260,10 +2286,10 @@ function suggestionFor(weakest, average, recordedDays) {
   return average >= 18 ? "下阶段主线：提高可见输出频率。" : "先保留一个最小专注块，哪怕只产出问题清单。";
 }
 
-function monthCells() {
-  const now = parseKey(todayKey());
-  const start = new Date(now.getFullYear(), now.getMonth(), 1);
-  const end = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+function monthCells(anchorDateKey = todayKey()) {
+  const anchor = parseKey(anchorDateKey);
+  const start = new Date(anchor.getFullYear(), anchor.getMonth(), 1);
+  const end = new Date(anchor.getFullYear(), anchor.getMonth() + 1, 1);
   const leadingBlanks = (start.getDay() + 6) % 7;
   const cells = Array.from({ length: leadingBlanks }, () => ({ blank: true }));
 
@@ -2277,8 +2303,8 @@ function monthCells() {
   return cells;
 }
 
-function trendSeries(period) {
-  const interval = period === "week" ? currentWeekInterval() : currentMonthInterval();
+function trendSeries(period, anchorDateKey = todayKey()) {
+  const interval = reviewInterval(period, anchorDateKey);
   const today = parseKey(todayKey());
   const end = interval.end < addDays(today, 1) ? interval.end : addDays(today, 1);
   const series = [];
@@ -2333,18 +2359,52 @@ function heatmapStyle(record) {
 }
 
 function currentWeekInterval() {
-  const start = startOfWeek(parseKey(todayKey()));
-  return { start, end: addDays(start, 7) };
+  return reviewInterval("week", todayKey());
 }
 
 function currentMonthInterval() {
-  const now = parseKey(todayKey());
+  return reviewInterval("month", todayKey());
+}
+
+function reviewInterval(period, anchorDateKey = todayKey()) {
+  const anchor = parseKey(anchorDateKey || todayKey());
+  if (period === "week") {
+    const start = startOfWeek(anchor);
+    return { start, end: addDays(start, 7) };
+  }
   return {
-    start: new Date(now.getFullYear(), now.getMonth(), 1),
-    end: new Date(now.getFullYear(), now.getMonth() + 1, 1)
+    start: new Date(anchor.getFullYear(), anchor.getMonth(), 1),
+    end: new Date(anchor.getFullYear(), anchor.getMonth() + 1, 1)
   };
 }
 
+function shiftReviewAnchor(period, anchorDateKey, amount) {
+  const anchor = parseKey(anchorDateKey || todayKey());
+  if (period === "week") return keyFromDate(addDays(anchor, amount * 7));
+  const target = new Date(anchor.getFullYear(), anchor.getMonth() + amount, 1);
+  const lastDay = new Date(target.getFullYear(), target.getMonth() + 1, 0).getDate();
+  target.setDate(Math.min(anchor.getDate(), lastDay));
+  return keyFromDate(target);
+}
+
+function isCurrentReviewPeriod(period, anchorDateKey) {
+  const interval = reviewInterval(period, anchorDateKey);
+  const today = parseKey(todayKey());
+  return today >= interval.start && today < interval.end;
+}
+
+function formatReviewPeriodLabel(period, anchorDateKey) {
+  const interval = reviewInterval(period, anchorDateKey);
+  if (period === "week") {
+    const end = addDays(interval.end, -1);
+    return `${formatShortDate(keyFromDate(interval.start))} - ${formatShortDate(keyFromDate(end))}`;
+  }
+  return `${interval.start.getFullYear()} 年 ${interval.start.getMonth() + 1} 月`;
+}
+
+function periodUnitLabel(period) {
+  return period === "week" ? "周" : "月";
+}
 function startOfWeek(date) {
   const copy = new Date(date.getFullYear(), date.getMonth(), date.getDate());
   const offset = (copy.getDay() + 6) % 7;

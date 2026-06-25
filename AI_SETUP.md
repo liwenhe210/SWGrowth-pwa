@@ -72,7 +72,7 @@ git commit -m "Add DeepSeek daily AI reviews"
 git push
 ```
 
-等待 GitHub Pages 部署完成。Service Worker 缓存已更新为 `sanwei-growth-v12`。
+等待 GitHub Pages 部署完成。Service Worker 缓存已更新为 `sanwei-growth-v13`。
 
 ## 5. 使用方法
 
@@ -118,7 +118,7 @@ AI 调用缓存和用量摘要可在 `ai_generation_logs` 表查看。
 
 ### 显示“AI 返回的不是有效 JSON”
 
-请重新部署最新的 `supabase/functions/ai-game-master/index.ts`。新版解析器可以处理 DeepSeek 偶尔返回的 Markdown JSON 代码块或 JSON 前后的说明文字，同时仍会验证称号、分析和建议字段。
+请重新部署最新的 `supabase/functions/ai-game-master/index.ts`。新版解析器可以处理 DeepSeek 偶尔返回的 Markdown JSON 代码块或 JSON 前后的说明文字，并会自动修正 style 字段、旁白长度偏差、缺失建议等轻微格式问题。
 
 ## 7. 安全说明
 

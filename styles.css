@@ -978,6 +978,33 @@ label {
   gap: 8px;
 }
 
+.period-toolbar {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.period-label {
+  display: grid;
+  justify-items: center;
+  gap: 3px;
+  min-width: 0;
+  text-align: center;
+}
+
+.period-label strong {
+  font-size: 17px;
+}
+
+.period-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .review-callout {
   display: grid;
   gap: 7px;
@@ -1372,6 +1399,23 @@ label {
 }
 
 @media (max-width: 430px) {
+  .period-toolbar {
+    grid-template-columns: 1fr;
+    justify-items: stretch;
+  }
+
+  .period-label {
+    order: -1;
+  }
+
+  .period-actions {
+    justify-content: stretch;
+  }
+
+  .period-actions button {
+    flex: 1 1 110px;
+  }
+
   .brand-title {
     max-width: 138px;
     overflow: hidden;
